@@ -11,15 +11,16 @@ The -v flag (verbose) prints each test name and pass/fail
 status individually, which is cleaner to read.
 """
 
-import pytest
 import numpy as np
 import pandas as pd
-from monte_carlo_var import (
+import pytest
+
+from app.engine.monte_carlo_var import (
+    calculate_var,
+    cholesky_decomposition,
     compute_log_returns,
     compute_statistics,
-    cholesky_decomposition,
     run_monte_carlo,
-    calculate_var,
 )
 
 # ─────────────────────────────────────────────
@@ -29,6 +30,7 @@ from monte_carlo_var import (
 # multiple tests can share. Instead of recreating
 # the same data in every test, you define it once
 # here and pytest injects it automatically.
+
 
 @pytest.fixture
 def sample_prices():
@@ -43,8 +45,8 @@ def sample_prices():
     np.random.seed(42)
     dates = pd.date_range(start="2023-01-01", periods=10, freq="B")  # B = business days
     data = {
-        "AAPL":  [150.0, 152.0, 151.5, 153.0, 154.0, 153.5, 155.0, 156.0, 155.5, 157.0],
-        "TSLA":  [200.0, 198.0, 202.0, 205.0, 203.0, 207.0, 210.0, 208.0, 212.0, 215.0],
+        "AAPL": [150.0, 152.0, 151.5, 153.0, 154.0, 153.5, 155.0, 156.0, 155.5, 157.0],
+        "TSLA": [200.0, 198.0, 202.0, 205.0, 203.0, 207.0, 210.0, 208.0, 212.0, 215.0],
         "GOOGL": [100.0, 101.0, 100.5, 102.0, 103.0, 102.5, 104.0, 105.0, 104.5, 106.0],
     }
     return pd.DataFrame(data, index=dates)
@@ -72,8 +74,8 @@ def sample_weights():
 # SECTION 2 TESTS: LOG RETURNS
 # ─────────────────────────────────────────────
 
-class TestComputeLogReturns:
 
+class TestComputeLogReturns:
     def test_output_shape(self, sample_prices, sample_log_returns):
         """
         Log returns should have exactly one fewer row than prices
@@ -109,8 +111,8 @@ class TestComputeLogReturns:
 # SECTION 3 TESTS: STATISTICS
 # ─────────────────────────────────────────────
 
-class TestComputeStatistics:
 
+class TestComputeStatistics:
     def test_mu_shape(self, sample_statistics, sample_prices):
         """
         Mean return vector should have one value per asset.
@@ -150,8 +152,8 @@ class TestComputeStatistics:
 # SECTION 4 TESTS: CHOLESKY DECOMPOSITION
 # ─────────────────────────────────────────────
 
-class TestCholeskyDecomposition:
 
+class TestCholeskyDecomposition:
     def test_reconstruction(self, sample_statistics):
         """
         The fundamental property of Cholesky decomposition:
@@ -187,8 +189,8 @@ class TestCholeskyDecomposition:
 # SECTION 5 TESTS: MONTE CARLO SIMULATION
 # ─────────────────────────────────────────────
 
-class TestRunMonteCarlo:
 
+class TestRunMonteCarlo:
     def test_output_length(self, sample_statistics, sample_weights):
         """
         The simulation should return exactly n_simulations P&L values.
@@ -217,7 +219,9 @@ class TestRunMonteCarlo:
         assert np.any(result > 0), "Expected some positive P&L values (gains)"
         assert np.any(result < 0), "Expected some negative P&L values (losses)"
 
-    def test_scales_linearly_with_portfolio_value(self, sample_statistics, sample_weights):
+    def test_scales_linearly_with_portfolio_value(
+        self, sample_statistics, sample_weights
+    ):
         """
         VaR (and all P&L values) should scale linearly with portfolio_value.
         If we double the portfolio value with the same random seed,
@@ -248,8 +252,8 @@ class TestRunMonteCarlo:
 # SECTION 6 TESTS: VaR CALCULATION
 # ─────────────────────────────────────────────
 
-class TestCalculateVar:
 
+class TestCalculateVar:
     @pytest.fixture
     def sample_pnl(self, sample_statistics, sample_weights):
         """Simulated P&L array used across VaR tests."""
@@ -319,8 +323,8 @@ class TestCalculateVar:
 # EDGE CASE TESTS
 # ─────────────────────────────────────────────
 
-class TestEdgeCases:
 
+class TestEdgeCases:
     def test_single_asset_portfolio(self):
         """
         A single-stock portfolio should work correctly —
@@ -329,9 +333,7 @@ class TestEdgeCases:
         """
         np.random.seed(42)
         # Synthetic single-asset log returns
-        single_returns = pd.DataFrame({
-            "AAPL": np.random.normal(0.001, 0.02, 252)
-        })
+        single_returns = pd.DataFrame({"AAPL": np.random.normal(0.001, 0.02, 252)})
         mu, sigma = compute_statistics(single_returns)
         weights = np.array([1.0])
         result = run_monte_carlo(mu, sigma, weights, 10_000, 1, 1000)
@@ -342,12 +344,13 @@ class TestEdgeCases:
         The engine should raise an AssertionError if portfolio weights
         don't sum to 1.0 — this is our input validation guard.
         """
-        mu, sigma = sample_statistics
-        bad_weights = np.array([0.5, 0.3, 0.3])  # sums to 1.1
+        _mu, _sigma = sample_statistics
+        _bad_weights = np.array([0.5, 0.3, 0.3])  # sums to 1.1
         portfolio = {"AAPL": 0.5, "TSLA": 0.3, "GOOGL": 0.3}
 
         with pytest.raises(AssertionError):
-            from monte_carlo_var import run_var_analysis
+            from app.engine.monte_carlo_var import run_var_analysis
+
             run_var_analysis(portfolio, 10_000, horizon=1)
 
     def test_equal_weight_portfolio(self, sample_statistics):
@@ -357,7 +360,7 @@ class TestEdgeCases:
         """
         mu, sigma = sample_statistics
         n = len(mu)
-        equal_weights = np.array([1/n] * n)
+        equal_weights = np.array([1 / n] * n)
         result = run_monte_carlo(mu, sigma, equal_weights, 10_000, 1, 1000)
         assert len(result) == 1000
         assert not np.any(np.isnan(result)), "Result should not contain NaN values"

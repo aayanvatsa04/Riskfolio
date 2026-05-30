@@ -23,15 +23,16 @@ IMPORTANT — Portfolio Value Definition:
 
 """
 
+import time
+
 import numpy as np
 import pandas as pd
 import yfinance as yf
-import time
-
 
 # ─────────────────────────────────────────────
 # SECTION 1: DATA INGESTION
 # ─────────────────────────────────────────────
+
 
 def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFrame:
     """
@@ -66,6 +67,7 @@ def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFr
 # SECTION 2: LOG RETURNS
 # ─────────────────────────────────────────────
 
+
 def compute_log_returns(prices: pd.DataFrame) -> pd.DataFrame:
     """
     Convert daily prices into daily log returns.
@@ -93,6 +95,7 @@ def compute_log_returns(prices: pd.DataFrame) -> pd.DataFrame:
 # ─────────────────────────────────────────────
 # SECTION 3: STATISTICAL PARAMETERS
 # ─────────────────────────────────────────────
+
 
 def compute_statistics(log_returns: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -122,6 +125,7 @@ def compute_statistics(log_returns: pd.DataFrame) -> tuple[np.ndarray, np.ndarra
 # SECTION 4: CHOLESKY DECOMPOSITION
 # ─────────────────────────────────────────────
 
+
 def cholesky_decomposition(cov_matrix: np.ndarray) -> np.ndarray:
     """
     Decompose the covariance matrix into a lower triangular matrix L
@@ -149,13 +153,14 @@ def cholesky_decomposition(cov_matrix: np.ndarray) -> np.ndarray:
 # SECTION 5: MONTE CARLO SIMULATION
 # ─────────────────────────────────────────────
 
+
 def run_monte_carlo(
     mu: np.ndarray,
     cov_matrix: np.ndarray,
     weights: np.ndarray,
     portfolio_value: float,
     horizon: int,
-    n_simulations: int = 10_000
+    n_simulations: int = 10_000,
 ) -> np.ndarray:
     """
     Run n_simulations Monte Carlo simulations of portfolio P&L
@@ -213,10 +218,8 @@ def run_monte_carlo(
 # SECTION 6: VaR CALCULATION
 # ─────────────────────────────────────────────
 
-def calculate_var(
-    portfolio_pnl: np.ndarray,
-    confidence_level: float = 0.95
-) -> dict:
+
+def calculate_var(portfolio_pnl: np.ndarray, confidence_level: float = 0.95) -> dict:
     """
     Extract Value at Risk (VaR) from the simulated P&L distribution.
 
@@ -255,12 +258,13 @@ def calculate_var(
 # SECTION 7: PLAIN-ENGLISH OUTPUT
 # ─────────────────────────────────────────────
 
+
 def explain_results(
     results: dict,
     portfolio_value: float,
     horizon: int,
     tickers: list[str],
-    weights: list[float]
+    weights: list[float],
 ) -> None:
     """
     Translate the raw VaR numbers into plain English for a retail investor.
@@ -279,11 +283,11 @@ def explain_results(
     print("📊  PORTFOLIO RISK REPORT — Riskfolio")
     print("=" * 60)
 
-    print(f"\n💼  YOUR PORTFOLIO")
+    print("\n💼  YOUR PORTFOLIO")
     print(f"    Current Market Value:  ${portfolio_value:,.2f}")
-    print(f"    (i.e. what your holdings are worth today, not your original investment)")
-    for ticker, weight in zip(tickers, weights):
-        print(f"    {ticker}: {weight*100:.1f}%  (${portfolio_value * weight:,.2f})")
+    print("    (i.e. what your holdings are worth today, not your original investment)")
+    for ticker, weight in zip(tickers, weights, strict=False):
+        print(f"    {ticker}: {weight * 100:.1f}%  (${portfolio_value * weight:,.2f})")
 
     print(f"\n⏱️   TIME HORIZON:  {horizon_label}")
     print(f"🎲  SIMULATIONS RUN:  {results['n_simulations']:,}")
@@ -295,7 +299,7 @@ def explain_results(
     print(f"""
     📖 What this means (in plain English):
        Over the next {horizon_label}, there is a 5% chance you
-       could lose ${results['var_positive']:,.2f} or MORE from your
+       could lose ${results["var_positive"]:,.2f} or MORE from your
        ${portfolio_value:,.2f} portfolio.
 
        Put another way: in roughly 1 out of every 20 similar
@@ -303,20 +307,22 @@ def explain_results(
        least this size.
 
        The other 95% of the time, your loss will be LESS than
-       ${results['var_positive']:,.2f}.
+       ${results["var_positive"]:,.2f}.
     """)
 
     print("-" * 60)
     print("🔴  EXPECTED SHORTFALL (CVaR) — Worst-Case Average")
     print("-" * 60)
-    print(f"\n    CVaR:  ${results['cvar_positive']:,.2f}  ({cvar_pct:.1f}% of portfolio)")
+    print(
+        f"\n    CVaR:  ${results['cvar_positive']:,.2f}  ({cvar_pct:.1f}% of portfolio)"
+    )
     print(f"""
     📖 What this means (in plain English):
        CVaR answers: "If things DO go badly (that worst 5%),
        how bad does it actually get on average?"
 
        In those worst-case scenarios, you would lose on average
-       ${results['cvar_positive']:,.2f} — that's {cvar_pct:.1f}% of your portfolio.
+       ${results["cvar_positive"]:,.2f} — that's {cvar_pct:.1f}% of your portfolio.
     """)
 
     print("-" * 60)
@@ -360,15 +366,16 @@ def explain_results(
 # MAIN: WIRE EVERYTHING TOGETHER
 # ─────────────────────────────────────────────
 
+
 def run_var_analysis(
-    portfolio: dict,                # e.g. {"AAPL": 0.5, "TSLA": 0.3, "GOOGL": 0.2}
-    portfolio_value: float,         # CURRENT MARKET VALUE in USD (what holdings are
-                                    # worth TODAY, not original investment)
-    horizon: int = 1,               # trading days: 1, 5, or 22
+    portfolio: dict,  # e.g. {"AAPL": 0.5, "TSLA": 0.3, "GOOGL": 0.2}
+    portfolio_value: float,  # CURRENT MARKET VALUE in USD (what holdings are
+    # worth TODAY, not original investment)
+    horizon: int = 1,  # trading days: 1, 5, or 22
     confidence_level: float = 0.95,
     n_simulations: int = 10_000,
-    verbose: bool = True            # True  = print full human-readable report (default)
-                                    # False = silent, return dict only (use for FastAPI)
+    verbose: bool = True,  # True  = print full human-readable report (default)
+    # False = silent, return dict only (use for FastAPI)
 ) -> dict:
     """
     Full end-to-end pipeline:
@@ -411,8 +418,7 @@ def run_var_analysis(
 
     t0 = time.perf_counter()
     portfolio_pnl = run_monte_carlo(
-        mu, sigma, weights, portfolio_value,
-        horizon, n_simulations
+        mu, sigma, weights, portfolio_value, horizon, n_simulations
     )
     t_simulation = time.perf_counter() - t0
 
@@ -423,12 +429,12 @@ def run_var_analysis(
     total_elapsed = time.perf_counter() - total_start
 
     results["timing"] = {
-        "data_fetch_s":      round(t_fetch, 4),
-        "log_returns_s":     round(t_returns, 4),
-        "statistics_s":      round(t_stats, 4),
-        "monte_carlo_s":     round(t_simulation, 4),
+        "data_fetch_s": round(t_fetch, 4),
+        "log_returns_s": round(t_returns, 4),
+        "statistics_s": round(t_stats, 4),
+        "monte_carlo_s": round(t_simulation, 4),
         "var_calculation_s": round(t_var, 4),
-        "total_s":           round(total_elapsed, 4),
+        "total_s": round(total_elapsed, 4),
     }
 
     # Only print when verbose=True — skip entirely when called from FastAPI
@@ -464,16 +470,16 @@ def run_var_analysis(
 
 if __name__ == "__main__":
     my_portfolio = {
-        "AAPL": 0.40,   # 40% Apple
-        "TSLA": 0.30,   # 30% Tesla
+        "AAPL": 0.40,  # 40% Apple
+        "TSLA": 0.30,  # 30% Tesla
         "GOOGL": 0.30,  # 30% Google
     }
 
     results = run_var_analysis(
         portfolio=my_portfolio,
-        portfolio_value=10_000,   # Current market value: holdings are worth $10,000 TODAY
-        horizon=1,                # 1-day VaR
-        confidence_level=0.95,    # 95% confidence
+        portfolio_value=10_000,  # Current market value: holdings are worth $10,000 TODAY
+        horizon=1,  # 1-day VaR
+        confidence_level=0.95,  # 95% confidence
         n_simulations=1_000_000,
-        verbose=True              # set to False when calling from FastAPI
+        verbose=True,  # set to False when calling from FastAPI
     )
