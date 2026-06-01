@@ -90,7 +90,8 @@ export function PortfolioForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [result, setResult] = useState<VaRResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const ENDPOINT = "http://localhost:8000"
+  const ENDPOINT =
+    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
 
   const addEntry = () => {
     setEntries([
