@@ -4,7 +4,7 @@ import math
 from typing import Annotated
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.engine.monte_carlo_var import fetch_historical_prices, run_var_analysis
@@ -28,6 +28,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+api_v1 = APIRouter(prefix="/api/v1")
 
 ALLOWED_PERIODS = {
     "1d",
@@ -143,14 +145,12 @@ async def root() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@app.get("/api/v1/health/", response_model=HealthResponse, include_in_schema=False)
-@app.get("/health", response_model=HealthResponse)
+@api_v1.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@app.post("/api/v1/analyze", response_model=VaRResponse, include_in_schema=False)
-@app.post("/analyze", response_model=VaRResponse)
+@api_v1.post("/analyze", response_model=VaRResponse)
 async def analyze_portfolio(request: PortfolioRequest) -> dict:
     try:
         portfolio, portfolio_value, holdings = _build_weighted_portfolio(
@@ -177,8 +177,7 @@ async def analyze_portfolio(request: PortfolioRequest) -> dict:
         ) from exc
 
 
-@app.get("/api/v1/historical-prices", include_in_schema=False)
-@app.get("/historical-prices")
+@api_v1.get("/historical-prices")
 async def historical_prices(
     tickers: Annotated[
         list[str],
@@ -209,3 +208,6 @@ async def historical_prices(
         "period": period,
         "rows": _serialize_prices(prices),
     }
+
+
+app.include_router(api_v1)

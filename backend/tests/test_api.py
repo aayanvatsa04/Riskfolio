@@ -38,14 +38,7 @@ def _engine_response() -> dict:
 
 
 def test_health_check():
-    response = asyncio.run(_request("GET", "/health"))
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
-
-
-def test_versioned_health_check_alias():
-    response = asyncio.run(_request("GET", "/api/v1/health/"))
+    response = asyncio.run(_request("GET", "/api/v1/health"))
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
@@ -76,7 +69,7 @@ def test_analyze_calls_engine_with_validated_payload(monkeypatch):
     response = asyncio.run(
         _request(
             "POST",
-            "/analyze",
+            "/api/v1/analyze",
             json={
                 "holdings": [
                     {"ticker": "aapl", "quantity": 40},
@@ -135,7 +128,7 @@ def test_analyze_rejects_invalid_quantity():
     response = asyncio.run(
         _request(
             "POST",
-            "/analyze",
+            "/api/v1/analyze",
             json={
                 "holdings": [{"ticker": "AAPL", "quantity": 0}],
             },
@@ -149,7 +142,7 @@ def test_analyze_rejects_invalid_horizon():
     response = asyncio.run(
         _request(
             "POST",
-            "/analyze",
+            "/api/v1/analyze",
             json={
                 "holdings": [{"ticker": "AAPL", "quantity": 10}],
                 "horizon": 10,
@@ -178,7 +171,7 @@ def test_analyze_reports_engine_failures(monkeypatch):
     response = asyncio.run(
         _request(
             "POST",
-            "/analyze",
+            "/api/v1/analyze",
             json={
                 "holdings": [{"ticker": "AAPL", "quantity": 10}],
             },
@@ -187,3 +180,15 @@ def test_analyze_reports_engine_failures(monkeypatch):
 
     assert response.status_code == 500
     assert "market data unavailable" in response.json()["detail"]
+
+
+def test_unversioned_analyze_route_is_not_registered():
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/analyze",
+            json={"holdings": [{"ticker": "AAPL", "quantity": 10}]},
+        )
+    )
+
+    assert response.status_code == 404
