@@ -89,9 +89,10 @@ find_free_port() {
     if port_available "$port"; then
       echo "$port"
       return 0
+    else
+      status=$?
     fi
 
-    status=$?
     if [[ "$status" -ne 1 ]]; then
       exit "$status"
     fi
