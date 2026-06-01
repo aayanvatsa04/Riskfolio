@@ -108,6 +108,48 @@ cd backend
 python -m pytest tests/test_engine.py -v
 ```
 
+### Running With Docker Compose
+
+```bash
+./scripts/compose-up.sh
+```
+
+This starts from frontend port `3000` and backend port `8000`. If either port
+is occupied, the script increments until it finds a free port and writes the
+selected values to `.env`.
+
+The script prints the exact URLs to open, for example:
+
+```text
+Using backend:  http://localhost:8000
+Using frontend: http://localhost:3001
+```
+
+The frontend is configured with `NEXT_PUBLIC_API_BASE_URL` from `.env`, so
+browser requests call the selected host-mapped backend directly.
+
+The default Compose ports are in `.env`. Copy `.env.example` if you need to
+reset or customize local values.
+
+Useful checks:
+
+```bash
+curl http://localhost:8000/health
+curl "http://localhost:8000/historical-prices?tickers=AAPL&period=5d"
+```
+
+Stop the stack with:
+
+```bash
+docker compose down
+```
+
+If you want a different starting range, set it in `.env` or when starting:
+
+```bash
+FRONTEND_PORT_START=3005 ./scripts/compose-up.sh
+```
+
 ### Frontend Setup
 
 ```bash
