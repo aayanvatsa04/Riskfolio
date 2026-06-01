@@ -19,13 +19,14 @@
   "[html]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
+  "prettier.semi": false,
   "eslint.validate": [
     "javascript",
     "javascriptreact",
     "typescript",
     "typescriptreact"
   ],
-  "eslint.workingDirectories": [{ "directory": "auto" }],
+  "eslint.workingDirectories": [{ "directory": "frontend" }],
   "js/ts.tsdk.path": "frontend/node_modules/typescript/lib",
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
