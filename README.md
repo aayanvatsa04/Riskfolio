@@ -19,7 +19,7 @@ Riskfolio is a web platform where users input their stock portfolio and the syst
 | Vectorized Monte Carlo Engine (10,000+ GBM simulations) | ✅ Complete |
 | Value at Risk (VaR) — 95% confidence interval | ✅ Complete |
 | Expected Shortfall (CVaR) — average tail loss | ✅ Complete |
-| Automated Pytest Suite (26 tests) | ✅ Complete |
+| Automated Pytest Suite | ✅ Complete |
 
 ---
 
@@ -48,10 +48,12 @@ Riskfolio/
 │   │   └── engine/
 │   │       ├── __init__.py
 │   │       └── monte_carlo_var.py   # Monte Carlo VaR engine
-│   ├── tests/
-│   │   └── test_engine.py           # Pytest test suite
-│   └── requirements.txt
+│   ├── tests/                       # Pytest test suite
+│   ├── pyproject.toml               # uv project metadata and dependencies
+│   └── uv.lock                      # locked backend dependency graph
 ├── frontend/
+│   ├── package.json
+│   ├── pnpm-lock.yaml
 │   └── ...                          # Next.js frontend
 ├── .github/
 │   └── workflows/
@@ -65,25 +67,90 @@ Riskfolio/
 ## Getting Started
 
 ### Prerequisites
-- Python 3.10+
-- Node.js 18+
+
+- Python 3.13
+- [uv](https://docs.astral.sh/uv/) for backend dependency management
+- Node.js 20+ (Node 22 recommended)
+- pnpm managed by Corepack
+- Docker Desktop, if using Docker Compose
+
+Install the local toolchain if needed:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+corepack enable
+```
+
+The frontend pins its package manager in `frontend/package.json`, so Corepack
+will resolve the project pnpm version automatically. Prefer this over
+`npm install -g pnpm` or the pnpm shell installer, which can leave contributors
+on different global pnpm versions.
+
+Clone the repo and create your local environment file:
+
+```bash
+git clone https://github.com/yourusername/Riskfolio.git
+cd Riskfolio
+cp .env.example .env
+```
+
+The root `.env` is used by Docker Compose and documents the default local
+ports. Keep `.env.example` committed, but keep `.env` local.
 
 ### Backend Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/Riskfolio.git
-cd Riskfolio
-
-# Set up Python virtual environment
 cd backend
-python3.10 -m venv .venv
-source .venv/bin/activate        # Mac/Linux
-# or
-.venv\Scripts\activate           # Windows
+uv sync --group dev
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
 
-# Install dependencies
-pip install -r requirements.txt
+Verify the API from another terminal:
+
+```bash
+curl http://localhost:8000/api/v1/health
+curl "http://localhost:8000/api/v1/historical-prices?tickers=AAPL&period=5d"
+```
+
+The main API endpoints are:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/health` | Health check |
+| `GET` | `/api/v1/historical-prices?tickers=AAPL&period=5d` | Fetch historical prices |
+| `POST` | `/api/v1/analyze` | Analyze holdings by ticker and quantity |
+
+Example `/api/v1/analyze` payload:
+
+```json
+{
+  "holdings": [
+    { "ticker": "AAPL", "quantity": 10 },
+    { "ticker": "MSFT", "quantity": 5 }
+  ],
+  "horizon": 1,
+  "confidence_level": 0.95,
+  "n_simulations": 10000
+}
+```
+
+### Frontend Setup
+
+Open a second terminal:
+
+```bash
+cd frontend
+pnpm install
+pnpm exec next dev --port 3000
+```
+
+Open `http://localhost:3000`.
+
+By default, the frontend calls `http://localhost:8000` for the API. If the
+backend is running on another port, pass the API URL when starting Next:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8001 pnpm exec next dev --port 3000
 ```
 
 ### Running the Monte Carlo Engine (standalone)
@@ -105,7 +172,16 @@ results = run_var_analysis(
 
 ```bash
 cd backend
-python -m pytest tests/test_engine.py -v
+uv run pytest
+uv run ruff check main.py app tests
+```
+
+Frontend checks:
+
+```bash
+cd frontend
+pnpm exec tsc --noEmit
+pnpm run build
 ```
 
 ### Running With Docker Compose
@@ -122,7 +198,7 @@ The script prints the exact URLs to open, for example:
 
 ```text
 Using backend:  http://localhost:8000
-Using frontend: http://localhost:3001
+Using frontend: http://localhost:3000
 ```
 
 The frontend is configured with `NEXT_PUBLIC_API_BASE_URL` from `.env`, so
@@ -134,8 +210,8 @@ reset or customize local values.
 Useful checks:
 
 ```bash
-curl http://localhost:8000/health
-curl "http://localhost:8000/historical-prices?tickers=AAPL&period=5d"
+curl http://localhost:8000/api/v1/health
+curl "http://localhost:8000/api/v1/historical-prices?tickers=AAPL&period=5d"
 ```
 
 Stop the stack with:
@@ -150,14 +226,6 @@ If you want a different starting range, set it in `.env` or when starting:
 FRONTEND_PORT_START=3005 ./scripts/compose-up.sh
 ```
 
-### Frontend Setup
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
 ---
 
 ## Software Engineering Practices
@@ -165,7 +233,7 @@ npm run dev
 | Practice | Implementation |
 |---|---|
 | Modular Architecture | Monte Carlo engine strictly decoupled from FastAPI layer |
-| Test-Driven Development (TDD) | Pytest suite with 26 tests covering every engine function |
+| Test-Driven Development (TDD) | Pytest suite covering the engine, API, and historical price endpoint |
 | Branch Protection & PR Workflow | All changes via feature branches and pull requests — direct pushes to main blocked |
 | Conventional Commits | Standardised commit message format enforced across the team |
 
