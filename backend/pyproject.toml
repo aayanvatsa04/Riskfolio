@@ -29,3 +29,7 @@ extend-select = [
     "FA",   # future annotations
     "RUF",  # Ruff-specific rules
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
