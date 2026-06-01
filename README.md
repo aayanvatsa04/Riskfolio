@@ -105,6 +105,50 @@ uv sync --group dev
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+### uv Quick Guide
+
+Run these commands from `backend/`.
+
+Add a runtime dependency:
+
+```bash
+uv add package-name
+```
+
+Add a development dependency, such as a test or lint tool:
+
+```bash
+uv add --dev package-name
+```
+
+Install dependencies from `uv.lock`:
+
+```bash
+uv sync
+```
+
+`uv sync` creates the backend virtual environment at `backend/.venv` if it does
+not already exist. In VS Code, press `Ctrl+Shift+P`, run `Python: Select
+Interpreter`, and choose the interpreter inside `backend/.venv`.
+
+Run a Python file or module inside the uv-managed environment:
+
+```bash
+uv run python path/to/file.py
+```
+
+Install the pre-commit hooks after syncing development dependencies:
+
+```bash
+uv run pre-commit install
+```
+
+Run all hooks manually:
+
+```bash
+uv run pre-commit run --all-files
+```
+
 Verify the API from another terminal:
 
 ```bash
