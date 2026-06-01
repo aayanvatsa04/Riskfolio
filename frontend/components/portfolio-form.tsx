@@ -1,40 +1,88 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Trash2, Plus, TrendingUp, AlertTriangle, Loader2 } from "lucide-react"
 
 interface PortfolioEntry {
   id: string
   ticker: string
-  buyPrice: number
-  currentValue: number
-  dateTransacted: string
+  quantity: number
+  currentPrice: number | null
+  priceStatus: "idle" | "loading" | "loaded" | "error"
+  priceError?: string
 }
 
 interface PortfolioRequest {
-  portfolio: Record<string, number>
-  portfolio_value: number
+  holdings: {
+    ticker: string
+    quantity: number
+  }[]
   horizon: number
   confidence_level: number
   n_simulations: number
 }
 
+interface HoldingValuation {
+  ticker: string
+  quantity: number
+  latest_price: number
+  market_value: number
+  weight: number
+}
+
 interface VaRResult {
   var_amount: number
   var_percentage: number
+  cvar_amount: number
+  cvar_percentage: number
+  mean_pnl: number
+  std_pnl: number
+  best_case: number
+  worst_case: number
   confidence_level: number
   horizon: number
+  n_simulations: number
   portfolio_value: number
+  holdings: HoldingValuation[]
+}
+
+interface ApiErrorDetail {
+  msg?: string
+  message?: string
 }
 
 export function PortfolioForm() {
   const [entries, setEntries] = useState<PortfolioEntry[]>([
-    { id: "1", ticker: "", buyPrice: 0, currentValue: 0, dateTransacted: "" },
+    {
+      id: "1",
+      ticker: "",
+      quantity: 0,
+      currentPrice: null,
+      priceStatus: "idle",
+    },
   ])
   const [confidenceLevel, setConfidenceLevel] = useState<number>(95)
   const [horizon, setHorizon] = useState<number>(22)
@@ -42,7 +90,7 @@ export function PortfolioForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [result, setResult] = useState<VaRResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [apiEndpoint, setApiEndpoint] = useState<string>("http://localhost:8000")
+  const ENDPOINT = "http://localhost:8000"
 
   const addEntry = () => {
     setEntries([
@@ -50,9 +98,9 @@ export function PortfolioForm() {
       {
         id: Date.now().toString(),
         ticker: "",
-        buyPrice: 0,
-        currentValue: 0,
-        dateTransacted: "",
+        quantity: 0,
+        currentPrice: null,
+        priceStatus: "idle",
       },
     ])
   }
@@ -63,53 +111,152 @@ export function PortfolioForm() {
     }
   }
 
-  const updateEntry = (id: string, field: keyof PortfolioEntry, value: string | number) => {
+  const updateEntry = (
+    id: string,
+    field: keyof PortfolioEntry,
+    value: string | number | null,
+  ) => {
     setEntries(
       entries.map((entry) =>
-        entry.id === id ? { ...entry, [field]: value } : entry
-      )
+        entry.id === id ? { ...entry, [field]: value } : entry,
+      ),
     )
   }
 
-  const calculateWeightsAndValue = (): { portfolio: Record<string, number>; portfolio_value: number } | null => {
+  const updateTicker = (id: string, ticker: string) => {
+    setEntries(
+      entries.map((entry) =>
+        entry.id === id
+          ? {
+              ...entry,
+              ticker,
+              currentPrice: null,
+              priceStatus: ticker.trim() ? "loading" : "idle",
+              priceError: undefined,
+            }
+          : entry,
+      ),
+    )
+  }
+
+  const fetchCurrentPrice = async (id: string, ticker: string) => {
+    try {
+      const params = new URLSearchParams({ tickers: ticker, period: "5d" })
+      const response = await fetch(`${ENDPOINT}/historical-prices?${params}`)
+
+      if (!response.ok) {
+        throw new Error(await getErrorMessage(response))
+      }
+
+      const data = await response.json()
+      const latestRow = data.rows?.at(-1)
+      const latestPrice = latestRow?.prices?.[ticker]
+
+      if (typeof latestPrice !== "number" || !Number.isFinite(latestPrice)) {
+        throw new Error(`No current price found for ${ticker}`)
+      }
+
+      setEntries((currentEntries) =>
+        currentEntries.map((entry) =>
+          entry.id === id && entry.ticker.toUpperCase().trim() === ticker
+            ? {
+                ...entry,
+                currentPrice: latestPrice,
+                priceStatus: "loaded",
+                priceError: undefined,
+              }
+            : entry,
+        ),
+      )
+    } catch (err) {
+      setEntries((currentEntries) =>
+        currentEntries.map((entry) =>
+          entry.id === id && entry.ticker.toUpperCase().trim() === ticker
+            ? {
+                ...entry,
+                currentPrice: null,
+                priceStatus: "error",
+                priceError:
+                  err instanceof Error ? err.message : "Failed to fetch price",
+              }
+            : entry,
+        ),
+      )
+    }
+  }
+
+  useEffect(() => {
+    const timers = entries
+      .map((entry) => {
+        const ticker = entry.ticker.toUpperCase().trim()
+
+        if (
+          !ticker ||
+          entry.currentPrice !== null ||
+          entry.priceStatus === "error"
+        ) {
+          return null
+        }
+
+        return window.setTimeout(() => {
+          void fetchCurrentPrice(entry.id, ticker)
+        }, 500)
+      })
+      .filter((timer): timer is number => timer !== null)
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer))
+    }
+  }, [entries])
+
+  const buildHoldingsRequest = (): PortfolioRequest["holdings"] | null => {
     const validEntries = entries.filter(
-      (e) => e.ticker.trim() !== "" && e.currentValue > 0
+      (entry) => entry.ticker.trim() !== "" && entry.quantity > 0,
     )
 
     if (validEntries.length === 0) {
       return null
     }
 
-    const totalValue = validEntries.reduce((sum, e) => sum + e.currentValue, 0)
-    const portfolio: Record<string, number> = {}
-
-    validEntries.forEach((entry) => {
-      const ticker = entry.ticker.toUpperCase().trim()
-      const weight = entry.currentValue / totalValue
-      if (portfolio[ticker]) {
-        portfolio[ticker] += weight
-      } else {
-        portfolio[ticker] = weight
-      }
-    })
-
-    return { portfolio, portfolio_value: totalValue }
+    return validEntries.map((entry) => ({
+      ticker: entry.ticker.toUpperCase().trim(),
+      quantity: entry.quantity,
+    }))
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const getErrorMessage = async (response: Response) => {
+    const errorData = await response.json().catch(() => null)
+
+    if (typeof errorData?.detail === "string") {
+      return errorData.detail
+    }
+
+    if (Array.isArray(errorData?.detail)) {
+      return errorData.detail
+        .map(
+          (item: ApiErrorDetail) => item.msg || item.message || "Invalid input",
+        )
+        .join(", ")
+    }
+
+    return `Server error: ${response.status}`
+  }
+
+  const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault()
     setError(null)
     setResult(null)
 
-    const calculated = calculateWeightsAndValue()
-    if (!calculated) {
-      setError("Please add at least one valid portfolio entry with a ticker and current value.")
+    const holdings = buildHoldingsRequest()
+    if (!holdings) {
+      setError(
+        "Please add at least one valid portfolio entry with a ticker and quantity.",
+      )
       return
     }
 
     const request: PortfolioRequest = {
-      portfolio: calculated.portfolio,
-      portfolio_value: calculated.portfolio_value,
+      holdings,
       horizon,
       confidence_level: confidenceLevel / 100,
       n_simulations: nSimulations,
@@ -118,7 +265,7 @@ export function PortfolioForm() {
     setIsLoading(true)
 
     try {
-      const response = await fetch(`${apiEndpoint}/analyze`, {
+      const response = await fetch(`${ENDPOINT}/analyze`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -127,20 +274,39 @@ export function PortfolioForm() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || `Server error: ${response.status}`)
+        throw new Error(await getErrorMessage(response))
       }
 
       const data = await response.json()
+      const portfolioValue = data.portfolio_value ?? 0
+      const varAmount =
+        data.var_positive ??
+        Math.abs(data.var ?? data.var_amount ?? data.VaR ?? 0)
+      const cvarAmount = data.cvar_positive ?? Math.abs(data.cvar ?? 0)
+
       setResult({
-        var_amount: data.var_amount ?? data.VaR ?? data.var ?? 0,
-        var_percentage: data.var_percentage ?? ((data.var_amount ?? data.VaR ?? data.var ?? 0) / calculated.portfolio_value) * 100,
+        var_amount: varAmount,
+        var_percentage:
+          data.var_percentage ??
+          (portfolioValue > 0 ? (varAmount / portfolioValue) * 100 : 0),
+        cvar_amount: cvarAmount,
+        cvar_percentage:
+          data.cvar_percentage ??
+          (portfolioValue > 0 ? (cvarAmount / portfolioValue) * 100 : 0),
+        mean_pnl: data.mean_pnl ?? 0,
+        std_pnl: data.std_pnl ?? 0,
+        best_case: data.best_case ?? 0,
+        worst_case: data.worst_case ?? 0,
         confidence_level: confidenceLevel,
         horizon,
-        portfolio_value: calculated.portfolio_value,
+        n_simulations: data.n_simulations ?? nSimulations,
+        portfolio_value: portfolioValue,
+        holdings: data.holdings ?? [],
       })
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to analyze portfolio. Please ensure your FastAPI server is running.")
+      setError(
+        err instanceof Error ? err.message : "Failed to analyze portfolio.",
+      )
     } finally {
       setIsLoading(false)
     }
@@ -153,7 +319,47 @@ export function PortfolioForm() {
     }).format(value)
   }
 
-  const totalPortfolioValue = entries.reduce((sum, e) => sum + (e.currentValue || 0), 0)
+  const formatSignedCurrency = (value: number) => {
+    const absoluteValue = formatCurrency(Math.abs(value))
+
+    if (value > 0) {
+      return `+${absoluteValue}`
+    }
+
+    if (value < 0) {
+      return `-${absoluteValue}`
+    }
+
+    return absoluteValue
+  }
+
+  const getHorizonLabel = (days: number) => {
+    if (days === 1) {
+      return "1 day"
+    }
+
+    if (days === 5) {
+      return "1 week"
+    }
+
+    if (days === 22) {
+      return "1 month"
+    }
+
+    return `${days} trading days`
+  }
+
+  const totalQuantity = entries.reduce(
+    (sum, entry) => sum + (entry.quantity || 0),
+    0,
+  )
+
+  const estimatedPortfolioValue = entries.reduce(
+    (sum, entry) =>
+      sum +
+      (entry.currentPrice !== null ? entry.currentPrice * entry.quantity : 0),
+    0,
+  )
 
   return (
     <div className="space-y-6">
@@ -164,69 +370,66 @@ export function PortfolioForm() {
             Portfolio Holdings
           </CardTitle>
           <CardDescription>
-            Enter your portfolio positions with ticker symbols and current market values
+            Enter your portfolio positions with ticker symbols and quantities
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* API Endpoint */}
-            <div className="space-y-2">
-              <Label htmlFor="api-endpoint">FastAPI Server URL</Label>
-              <Input
-                id="api-endpoint"
-                type="text"
-                value={apiEndpoint}
-                onChange={(e) => setApiEndpoint(e.target.value)}
-                placeholder="http://localhost:8000"
-              />
-            </div>
-
             {/* Portfolio Entries */}
-            <div className="space-y-4">
-              <div className="grid grid-cols-12 gap-2 text-sm font-medium text-muted-foreground">
-                <div className="col-span-3">Ticker</div>
-                <div className="col-span-3">Buy Price ($)</div>
-                <div className="col-span-3">Current Value ($)</div>
-                <div className="col-span-2">Date</div>
-                <div className="col-span-1"></div>
+            <div className="flex flex-col gap-4 w-full">
+              <div className="flex gap-2 w-full text-sm font-medium text-muted-foreground">
+                <div className="flex-1">Ticker</div>
+                <div className="flex-1">Quantity</div>
+                <div className="flex-1">Current Price</div>
+                <div className="w-8" />
               </div>
 
               {entries.map((entry) => (
-                <div key={entry.id} className="grid grid-cols-12 gap-2 items-center">
-                  <div className="col-span-3">
+                <div key={entry.id} className="flex gap-2">
+                  <div className="flex-1">
                     <Input
                       placeholder="AAPL"
                       value={entry.ticker}
-                      onChange={(e) => updateEntry(entry.id, "ticker", e.target.value.toUpperCase())}
+                      onChange={(e) =>
+                        updateTicker(entry.id, e.target.value.toUpperCase())
+                      }
                       className="uppercase"
                     />
                   </div>
-                  <div className="col-span-3">
+                  <div className="flex-1">
                     <Input
                       type="number"
-                      placeholder="0.00"
+                      placeholder="0"
                       min="0"
-                      step="0.01"
-                      value={entry.buyPrice || ""}
-                      onChange={(e) => updateEntry(entry.id, "buyPrice", parseFloat(e.target.value) || 0)}
+                      step="any"
+                      value={entry.quantity || ""}
+                      onChange={(e) =>
+                        updateEntry(
+                          entry.id,
+                          "quantity",
+                          parseFloat(e.target.value) || 0,
+                        )
+                      }
                     />
                   </div>
-                  <div className="col-span-3">
+                  <div className="flex-1">
                     <Input
-                      type="number"
-                      placeholder="0.00"
-                      min="0"
-                      step="0.01"
-                      value={entry.currentValue || ""}
-                      onChange={(e) => updateEntry(entry.id, "currentValue", parseFloat(e.target.value) || 0)}
+                      readOnly
+                      value={
+                        entry.priceStatus === "loading"
+                          ? "Loading..."
+                          : entry.currentPrice !== null
+                            ? formatCurrency(entry.currentPrice)
+                            : ""
+                      }
+                      placeholder="Auto-filled"
+                      aria-invalid={entry.priceStatus === "error"}
                     />
-                  </div>
-                  <div className="col-span-2">
-                    <Input
-                      type="date"
-                      value={entry.dateTransacted}
-                      onChange={(e) => updateEntry(entry.id, "dateTransacted", e.target.value)}
-                    />
+                    {entry.priceStatus === "error" && entry.priceError && (
+                      <p className="mt-1 text-xs text-destructive">
+                        {entry.priceError}
+                      </p>
+                    )}
                   </div>
                   <div className="col-span-1">
                     <Button
@@ -242,17 +445,26 @@ export function PortfolioForm() {
                 </div>
               ))}
 
-              <Button type="button" variant="outline" onClick={addEntry} className="w-full">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={addEntry}
+                className="w-full"
+              >
                 <Plus className="h-4 w-4 mr-2" />
                 Add Position
               </Button>
             </div>
 
-            {/* Total Portfolio Value */}
+            {/* Portfolio Summary */}
             <div className="rounded-lg bg-muted p-4">
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium">Total Portfolio Value</span>
-                <span className="text-lg font-bold">{formatCurrency(totalPortfolioValue)}</span>
+              <div className="mt-1 flex justify-between text-sm font-bold">
+                <span>Total Quantity</span>
+                <span>{totalQuantity.toLocaleString()}</span>
+              </div>
+              <div className="mt-1 flex justify-between text-lg font-bold">
+                <span>Estimated Position Value</span>
+                <span>{formatCurrency(estimatedPortfolioValue)}</span>
               </div>
             </div>
 
@@ -350,40 +562,165 @@ export function PortfolioForm() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="rounded-lg bg-muted p-4">
-                <p className="text-sm text-muted-foreground">VaR Amount</p>
-                <p className="text-2xl font-bold text-chart-1">{formatCurrency(result.var_amount)}</p>
+                <p className="text-sm text-muted-foreground">Value at Risk</p>
+                <p className="text-2xl font-bold text-chart-1">
+                  {formatCurrency(result.var_amount)}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {result.var_percentage.toFixed(2)}% of portfolio
+                </p>
               </div>
               <div className="rounded-lg bg-muted p-4">
-                <p className="text-sm text-muted-foreground">VaR Percentage</p>
-                <p className="text-2xl font-bold text-chart-1">{result.var_percentage.toFixed(2)}%</p>
+                <p className="text-sm text-muted-foreground">
+                  Expected Shortfall
+                </p>
+                <p className="text-2xl font-bold text-chart-1">
+                  {formatCurrency(result.cvar_amount)}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {result.cvar_percentage.toFixed(2)}% of portfolio
+                </p>
               </div>
             </div>
 
             <div className="rounded-lg bg-secondary p-4 space-y-2">
               <p className="font-semibold">What does this mean?</p>
-              <p className="text-muted-foreground">
-                With a <span className="font-medium text-foreground">{result.confidence_level}%</span> confidence level 
-                and a <span className="font-medium text-foreground">{result.horizon}-day</span> time horizon:
-              </p>
               <p className="text-lg">
-                You have a <span className="font-bold text-chart-1">{(100 - result.confidence_level).toFixed(0)}%</span> chance 
-                of losing at least <span className="font-bold text-chart-1">{formatCurrency(result.var_amount)}</span>, 
-                which represents <span className="font-bold text-chart-1">{result.var_percentage.toFixed(2)}%</span> of 
-                your <span className="font-medium">{formatCurrency(result.portfolio_value)}</span> portfolio.
+                You have a{" "}
+                <span className="font-bold text-chart-1">
+                  {(100 - result.confidence_level).toFixed(0)}%
+                </span>{" "}
+                chance of losing at least{" "}
+                <span className="font-bold text-chart-1">
+                  {formatCurrency(result.var_amount)}
+                </span>{" "}
+                over the next {getHorizonLabel(result.horizon)}, which
+                represents{" "}
+                <span className="font-bold text-chart-1">
+                  {result.var_percentage.toFixed(2)}%
+                </span>{" "}
+                of your{" "}
+                <span className="font-medium">
+                  {formatCurrency(result.portfolio_value)}
+                </span>{" "}
+                portfolio.
               </p>
+              <p className="text-sm text-muted-foreground">
+                If returns land in the worst{" "}
+                {(100 - result.confidence_level).toFixed(0)}% of simulated
+                outcomes, the average loss is{" "}
+                <span className="font-medium text-foreground">
+                  {formatCurrency(result.cvar_amount)}
+                </span>
+                .
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-xs text-muted-foreground">Expected P&L</p>
+                <p className="text-lg font-semibold">
+                  {formatSignedCurrency(result.mean_pnl)}
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-xs text-muted-foreground">Best Case</p>
+                <p className="text-lg font-semibold text-chart-1">
+                  {formatSignedCurrency(result.best_case)}
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-xs text-muted-foreground">Worst Case</p>
+                <p className="text-lg font-semibold text-destructive">
+                  {formatSignedCurrency(result.worst_case)}
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-xs text-muted-foreground">P&L Spread</p>
+                <p className="text-lg font-semibold">
+                  {formatCurrency(result.std_pnl)}
+                </p>
+              </div>
             </div>
 
             <div className="text-sm text-muted-foreground">
               <p className="font-medium mb-1">Technical Details:</p>
               <ul className="list-disc list-inside space-y-1">
                 <li>Confidence Level: {result.confidence_level}%</li>
-                <li>Time Horizon: {result.horizon} trading day{result.horizon > 1 ? "s" : ""}</li>
-                <li>Portfolio Value: {formatCurrency(result.portfolio_value)}</li>
-                <li>Monte Carlo Simulations: {nSimulations.toLocaleString()}</li>
+                <li>
+                  Time Horizon: {getHorizonLabel(result.horizon)}
+                </li>
+                <li>
+                  Portfolio Value: {formatCurrency(result.portfolio_value)}
+                </li>
+                <li>
+                  Monte Carlo Simulations:{" "}
+                  {result.n_simulations.toLocaleString()}
+                </li>
               </ul>
             </div>
+
+            {result.holdings.length > 0 && (
+              <div className="text-sm">
+                <p className="font-medium mb-2">Calculated Holdings:</p>
+                <div className="space-y-2">
+                  {result.holdings.map((holding) => (
+                    <div
+                      key={holding.ticker}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2"
+                    >
+                      <span className="font-medium">{holding.ticker}</span>
+                      <span className="text-muted-foreground">
+                        {holding.quantity.toLocaleString()} shares at{" "}
+                        {formatCurrency(holding.latest_price)}
+                      </span>
+                      <span>
+                        {(holding.weight * 100).toFixed(2)}% /{" "}
+                        {formatCurrency(holding.market_value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <Accordion type="single" collapsible className="rounded-lg border px-4">
+              <AccordionItem value="glossary">
+                <AccordionTrigger>Key Terms</AccordionTrigger>
+                <AccordionContent className="space-y-3 text-muted-foreground">
+                  <p>
+                    <span className="font-medium text-foreground">
+                      Value at Risk:
+                    </span>{" "}
+                    A threshold loss. At {result.confidence_level}% confidence,
+                    losses should be less than this amount in most comparable
+                    periods.
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">
+                      Expected Shortfall:
+                    </span>{" "}
+                    The average loss in the worst simulated tail outcomes.
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">
+                      Monte Carlo Simulation:
+                    </span>{" "}
+                    A method that runs many possible portfolio outcomes using
+                    historical return behavior and random shocks.
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">
+                      Portfolio Value:
+                    </span>{" "}
+                    The current market value of your holdings, calculated from
+                    latest prices and quantities.
+                  </p>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
           </CardContent>
         </Card>
       )}
