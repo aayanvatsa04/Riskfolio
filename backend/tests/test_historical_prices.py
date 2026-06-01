@@ -31,7 +31,7 @@ def test_historical_prices_returns_serialized_price_rows(monkeypatch):
     )
 
     response = asyncio.run(
-        _request("GET", "/historical-prices?tickers=aapl,TSLA&period=1y")
+        _request("GET", "/api/v1/historical-prices?tickers=aapl,TSLA&period=1y")
     )
 
     assert response.status_code == 200
@@ -48,7 +48,13 @@ def test_historical_prices_returns_serialized_price_rows(monkeypatch):
 
 def test_historical_prices_rejects_invalid_period():
     response = asyncio.run(
-        _request("GET", "/historical-prices?tickers=AAPL&period=bad")
+        _request("GET", "/api/v1/historical-prices?tickers=AAPL&period=bad")
     )
 
     assert response.status_code == 422
+
+
+def test_unversioned_historical_prices_route_is_not_registered():
+    response = asyncio.run(_request("GET", "/historical-prices?tickers=AAPL"))
+
+    assert response.status_code == 404
