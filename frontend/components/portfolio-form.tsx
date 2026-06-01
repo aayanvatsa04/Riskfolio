@@ -170,7 +170,9 @@ export function PortfolioForm() {
   const fetchCurrentPrice = async (id: string, ticker: string) => {
     try {
       const params = new URLSearchParams({ tickers: ticker, period: "5d" })
-      const response = await fetch(`${ENDPOINT}/api/v1/historical-prices?${params}`)
+      const response = await fetch(
+        `${ENDPOINT}/api/v1/historical-prices?${params}`,
+      )
 
       if (!response.ok) {
         throw new Error(await getErrorMessage(response))
@@ -260,9 +262,7 @@ export function PortfolioForm() {
     return Date.now().toString()
   }
 
-  const getDefaultPortfolioName = (
-    holdings: PortfolioRequest["holdings"],
-  ) => {
+  const getDefaultPortfolioName = (holdings: PortfolioRequest["holdings"]) => {
     const tickers = holdings.map((holding) => holding.ticker).join(", ")
     return tickers ? `${tickers} Portfolio` : "Untitled Portfolio"
   }
@@ -514,7 +514,7 @@ export function PortfolioForm() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="space-y-4 rounded-lg border p-4">
+            <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="portfolio-name">Portfolio Name</Label>
@@ -533,7 +533,7 @@ export function PortfolioForm() {
                     onValueChange={(value) => void handleLoadPortfolio(value)}
                     disabled={savedPortfolios.length === 0}
                   >
-                    <SelectTrigger id="saved-portfolio">
+                    <SelectTrigger id="saved-portfolio" className="w-full">
                       <SelectValue placeholder="Choose portfolio" />
                     </SelectTrigger>
                     <SelectContent>
@@ -860,9 +860,7 @@ export function PortfolioForm() {
               <p className="font-medium mb-1">Technical Details:</p>
               <ul className="list-disc list-inside space-y-1">
                 <li>Confidence Level: {result.confidence_level}%</li>
-                <li>
-                  Time Horizon: {getHorizonLabel(result.horizon)}
-                </li>
+                <li>Time Horizon: {getHorizonLabel(result.horizon)}</li>
                 <li>
                   Portfolio Value: {formatCurrency(result.portfolio_value)}
                 </li>
@@ -897,7 +895,11 @@ export function PortfolioForm() {
               </div>
             )}
 
-            <Accordion type="single" collapsible className="rounded-lg border px-4">
+            <Accordion
+              type="single"
+              collapsible
+              className="rounded-lg border px-4"
+            >
               <AccordionItem value="glossary">
                 <AccordionTrigger>Key Terms</AccordionTrigger>
                 <AccordionContent className="space-y-3 text-muted-foreground">
