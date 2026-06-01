@@ -143,7 +143,7 @@ export function PortfolioForm() {
   const fetchCurrentPrice = async (id: string, ticker: string) => {
     try {
       const params = new URLSearchParams({ tickers: ticker, period: "5d" })
-      const response = await fetch(`${ENDPOINT}/historical-prices?${params}`)
+      const response = await fetch(`${ENDPOINT}/api/v1/historical-prices?${params}`)
 
       if (!response.ok) {
         throw new Error(await getErrorMessage(response))
@@ -266,7 +266,7 @@ export function PortfolioForm() {
     setIsLoading(true)
 
     try {
-      const response = await fetch(`${ENDPOINT}/analyze`, {
+      const response = await fetch(`${ENDPOINT}/api/v1/analyze`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
