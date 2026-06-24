@@ -24,7 +24,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Trash2, Plus, TrendingUp, AlertTriangle, Loader2 } from "lucide-react"
+import { portfolioDb, type SavedPortfolio } from "@/lib/portfolio-db"
+import {
+  Trash2,
+  Plus,
+  TrendingUp,
+  AlertTriangle,
+  Loader2,
+  Save,
+} from "lucide-react"
 
 interface PortfolioEntry {
   id: string
@@ -90,20 +98,39 @@ export function PortfolioForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [result, setResult] = useState<VaRResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [savedPortfolios, setSavedPortfolios] = useState<SavedPortfolio[]>([])
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string | null>(
+    null,
+  )
+  const [portfolioName, setPortfolioName] = useState("")
+  const [saveStatus, setSaveStatus] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
   const ENDPOINT =
     process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
 
+  const createBlankEntry = (): PortfolioEntry => ({
+    id: Date.now().toString(),
+    ticker: "",
+    quantity: 0,
+    currentPrice: null,
+    priceStatus: "idle",
+  })
+
+  const refreshSavedPortfolios = async () => {
+    const portfolios = await portfolioDb.savedPortfolios
+      .orderBy("updatedAt")
+      .reverse()
+      .toArray()
+
+    setSavedPortfolios(portfolios)
+  }
+
+  useEffect(() => {
+    void refreshSavedPortfolios()
+  }, [])
+
   const addEntry = () => {
-    setEntries([
-      ...entries,
-      {
-        id: Date.now().toString(),
-        ticker: "",
-        quantity: 0,
-        currentPrice: null,
-        priceStatus: "idle",
-      },
-    ])
+    setEntries([...entries, createBlankEntry()])
   }
 
   const removeEntry = (id: string) => {
@@ -143,7 +170,9 @@ export function PortfolioForm() {
   const fetchCurrentPrice = async (id: string, ticker: string) => {
     try {
       const params = new URLSearchParams({ tickers: ticker, period: "5d" })
-      const response = await fetch(`${ENDPOINT}/api/v1/historical-prices?${params}`)
+      const response = await fetch(
+        `${ENDPOINT}/api/v1/historical-prices?${params}`,
+      )
 
       if (!response.ok) {
         throw new Error(await getErrorMessage(response))
@@ -223,6 +252,115 @@ export function PortfolioForm() {
       ticker: entry.ticker.toUpperCase().trim(),
       quantity: entry.quantity,
     }))
+  }
+
+  const createPortfolioId = () => {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+      return crypto.randomUUID()
+    }
+
+    return Date.now().toString()
+  }
+
+  const getDefaultPortfolioName = (holdings: PortfolioRequest["holdings"]) => {
+    const tickers = holdings.map((holding) => holding.ticker).join(", ")
+    return tickers ? `${tickers} Portfolio` : "Untitled Portfolio"
+  }
+
+  const getEntriesFromPortfolio = (
+    portfolio: SavedPortfolio,
+  ): PortfolioEntry[] => {
+    if (portfolio.holdings.length === 0) {
+      return [createBlankEntry()]
+    }
+
+    return portfolio.holdings.map((holding, index) => ({
+      id: `${portfolio.id}-${index}`,
+      ticker: holding.ticker,
+      quantity: holding.quantity,
+      currentPrice: null,
+      priceStatus: holding.ticker ? "loading" : "idle",
+    }))
+  }
+
+  const handleSavePortfolio = async () => {
+    const holdings = buildHoldingsRequest()
+    if (!holdings) {
+      setSaveStatus("Add at least one ticker and quantity before saving.")
+      return
+    }
+
+    setIsSaving(true)
+    setSaveStatus(null)
+
+    try {
+      const now = new Date().toISOString()
+      const existingPortfolio = selectedPortfolioId
+        ? await portfolioDb.savedPortfolios.get(selectedPortfolioId)
+        : null
+      const portfolio: SavedPortfolio = {
+        id: existingPortfolio?.id ?? createPortfolioId(),
+        name: portfolioName.trim() || getDefaultPortfolioName(holdings),
+        holdings,
+        confidenceLevel,
+        horizon,
+        nSimulations,
+        createdAt: existingPortfolio?.createdAt ?? now,
+        updatedAt: now,
+      }
+
+      await portfolioDb.savedPortfolios.put(portfolio)
+      setSelectedPortfolioId(portfolio.id)
+      setPortfolioName(portfolio.name)
+      setSaveStatus("Portfolio saved locally.")
+      await refreshSavedPortfolios()
+    } catch (err) {
+      setSaveStatus(
+        err instanceof Error ? err.message : "Failed to save portfolio.",
+      )
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleLoadPortfolio = async (portfolioId: string) => {
+    const portfolio = await portfolioDb.savedPortfolios.get(portfolioId)
+    if (!portfolio) {
+      setSaveStatus("Saved portfolio not found.")
+      await refreshSavedPortfolios()
+      return
+    }
+
+    setSelectedPortfolioId(portfolio.id)
+    setPortfolioName(portfolio.name)
+    setEntries(getEntriesFromPortfolio(portfolio))
+    setConfidenceLevel(portfolio.confidenceLevel)
+    setHorizon(portfolio.horizon)
+    setNSimulations(portfolio.nSimulations)
+    setResult(null)
+    setError(null)
+    setSaveStatus(`Loaded ${portfolio.name}.`)
+  }
+
+  const handleDeletePortfolio = async () => {
+    if (!selectedPortfolioId) {
+      return
+    }
+
+    await portfolioDb.savedPortfolios.delete(selectedPortfolioId)
+    setSelectedPortfolioId(null)
+    setPortfolioName("")
+    setSaveStatus("Saved portfolio deleted.")
+    await refreshSavedPortfolios()
+  }
+
+  const handleNewPortfolio = () => {
+    setSelectedPortfolioId(null)
+    setPortfolioName("")
+    setEntries([createBlankEntry()])
+    setResult(null)
+    setError(null)
+    setSaveStatus(null)
   }
 
   const getErrorMessage = async (response: Response) => {
@@ -376,6 +514,78 @@ export function PortfolioForm() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="portfolio-name">Portfolio Name</Label>
+                  <Input
+                    id="portfolio-name"
+                    placeholder="Long-term portfolio"
+                    value={portfolioName}
+                    onChange={(event) => setPortfolioName(event.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="saved-portfolio">Saved Portfolio</Label>
+                  <Select
+                    value={selectedPortfolioId ?? ""}
+                    onValueChange={(value) => void handleLoadPortfolio(value)}
+                    disabled={savedPortfolios.length === 0}
+                  >
+                    <SelectTrigger id="saved-portfolio" className="w-full">
+                      <SelectValue placeholder="Choose portfolio" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {savedPortfolios.map((portfolio) => (
+                        <SelectItem key={portfolio.id} value={portfolio.id}>
+                          {portfolio.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleNewPortfolio}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  New
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleSavePortfolio()}
+                  disabled={isSaving}
+                >
+                  {isSaving ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-2" />
+                  )}
+                  Save
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleDeletePortfolio()}
+                  disabled={!selectedPortfolioId}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </Button>
+                {saveStatus && (
+                  <p className="text-sm text-muted-foreground" role="status">
+                    {saveStatus}
+                  </p>
+                )}
+              </div>
+            </div>
+
             {/* Portfolio Entries */}
             <div className="flex flex-col gap-4 w-full">
               <div className="flex gap-2 w-full text-sm font-medium text-muted-foreground">
@@ -650,9 +860,7 @@ export function PortfolioForm() {
               <p className="font-medium mb-1">Technical Details:</p>
               <ul className="list-disc list-inside space-y-1">
                 <li>Confidence Level: {result.confidence_level}%</li>
-                <li>
-                  Time Horizon: {getHorizonLabel(result.horizon)}
-                </li>
+                <li>Time Horizon: {getHorizonLabel(result.horizon)}</li>
                 <li>
                   Portfolio Value: {formatCurrency(result.portfolio_value)}
                 </li>
@@ -687,7 +895,11 @@ export function PortfolioForm() {
               </div>
             )}
 
-            <Accordion type="single" collapsible className="rounded-lg border px-4">
+            <Accordion
+              type="single"
+              collapsible
+              className="rounded-lg border px-4"
+            >
               <AccordionItem value="glossary">
                 <AccordionTrigger>Key Terms</AccordionTrigger>
                 <AccordionContent className="space-y-3 text-muted-foreground">
