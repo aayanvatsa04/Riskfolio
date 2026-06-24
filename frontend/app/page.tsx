@@ -1,5 +1,5 @@
-import { PortfolioForm } from "@/components/portfolio-form";
-import { TrendingUp } from "lucide-react";
+import { PortfolioForm } from "@/components/portfolio-form"
+import { TrendingUp } from "lucide-react"
 
 export default function Page() {
   return (
@@ -32,5 +32,5 @@ export default function Page() {
         </div>
       </div>
     </main>
-  );
+  )
 }
