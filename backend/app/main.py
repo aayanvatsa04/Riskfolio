@@ -217,6 +217,7 @@ async def historical_prices(
         "rows": _serialize_prices(prices),
     }
 
+
 @api_v1.post("/optimize", response_model=OptimizeResponse)
 async def optimize_portfolio(request: OptimizeRequest) -> dict:
     """
@@ -285,5 +286,6 @@ async def optimize_portfolio(request: OptimizeRequest) -> dict:
             status_code=500,
             detail=f"Unable to complete portfolio optimisation: {exc}",
         ) from exc
+
 
 app.include_router(api_v1)

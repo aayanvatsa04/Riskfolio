@@ -94,9 +94,10 @@ class VaRResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
 
-# ─────────────────────────────────────────────────────────────────────────────
+
+# ────────────────────────────────────────────────────────────────
 # MPT OPTIMIZER MODELS
-# ─────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────
 # These models mirror the structure returned by run_mpt_optimization().
 # FastAPI uses them to:
 #   1. Validate the incoming request (OptimizeRequest)
@@ -183,14 +184,14 @@ class OptimizeRequest(BaseModel):
             'Example: [{"ticker": "AAPL", "quantity": 10}, '
             '{"ticker": "TSLA", "quantity": 5}]'
         ),
-        min_length=2,    # Pydantic enforces this — a 422 is returned if only 1 holding
-        max_length=20,   # Same cap as VaR analysis — prevents abuse
+        min_length=2,  # Pydantic enforces this — a 422 is returned if only 1 holding
+        max_length=20,  # Same cap as VaR analysis — prevents abuse
     )
 
     n_portfolios: int = Field(
         default=5_000,
-        ge=500,          # Minimum 500 — fewer than this gives a sparse, misleading frontier
-        le=50_000,       # Maximum 50,000 — above this the JSON payload becomes large
+        ge=500,  # Minimum 500 — fewer than this gives a sparse, misleading frontier
+        le=50_000,  # Maximum 50,000 — above this the JSON payload becomes large
         description=(
             "Number of random portfolios to simulate for the Efficient Frontier. "
             "More portfolios = smoother frontier but slower response. "
@@ -200,8 +201,8 @@ class OptimizeRequest(BaseModel):
 
     risk_free_rate: float = Field(
         default=0.05,
-        ge=0.0,          # Cannot be negative — a negative risk-free rate is nonsensical here
-        lt=1.0,          # Must be less than 100% — a rate above 1.0 would be extraordinary
+        ge=0.0,  # Cannot be negative — a negative risk-free rate is nonsensical here
+        lt=1.0,  # Must be less than 100% — a rate above 1.0 would be extraordinary
         description=(
             "Annualised risk-free rate used in the Sharpe ratio denominator. "
             "Default 0.05 = 5%, approximating the US 10-year Treasury yield."
@@ -226,11 +227,11 @@ class OptimizeTimingBreakdown(BaseModel):
     since the optimizer has a different pipeline structure.
     """
 
-    data_fetch_s: float    # Time to fetch 5 years of prices from yfinance
-    log_returns_s: float   # Time to compute daily log returns
-    statistics_s: float    # Time to compute μ, Σ, and annualise them
+    data_fetch_s: float  # Time to fetch 5 years of prices from yfinance
+    log_returns_s: float  # Time to compute daily log returns
+    statistics_s: float  # Time to compute μ, Σ, and annualise them
     optimization_s: float  # Time to simulate all n_portfolios (the vectorized step)
-    total_s: float         # Wall-clock time for the entire endpoint
+    total_s: float  # Wall-clock time for the entire endpoint
 
 
 class OptimizeResponse(BaseModel):
