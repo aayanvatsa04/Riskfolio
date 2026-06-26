@@ -29,6 +29,7 @@ extend-select = [
     "FA",   # future annotations
     "RUF",  # Ruff-specific rules
 ]
+ignore = ["RUF002", "RUF003"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
