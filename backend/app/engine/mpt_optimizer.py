@@ -659,7 +659,7 @@ def run_mpt_optimization(
 # ─────────────────────────────────────────────────────────────────────────────
 # Run this file directly to see a full printed summary:
 #     cd backend
-#     uv run python app/engine/mpt_optimizer.py
+#     uv run python -m app.engine.mpt_optimizer
 #
 # Set verbose=True to see the timing breakdown and portfolio comparison.
 # When called from FastAPI, verbose is always False.
