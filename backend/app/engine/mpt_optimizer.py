@@ -114,8 +114,10 @@ def annualise_parameters(
     Returns:
         Tuple of (annual_mu, annual_sigma), same shapes as inputs.
     """
-    annual_mu    = mu    * TRADING_DAYS   # element-wise scalar multiply
-    annual_sigma = sigma * TRADING_DAYS   # element-wise scalar multiply (each entry ×252)
+    annual_mu = mu * TRADING_DAYS  # element-wise scalar multiply
+    annual_sigma = (
+        sigma * TRADING_DAYS
+    )  # element-wise scalar multiply (each entry ×252)
     return annual_mu, annual_sigma
 
 
@@ -253,11 +255,11 @@ def simulate_random_portfolios(
     # ── A: Generate random weights ──────────────────────────────────────────
     raw = np.random.random((n_portfolios, n_assets))
     # Normalise each row so all weights in a portfolio sum to exactly 1.0
-    weights = raw / raw.sum(axis=1, keepdims=True)   # shape: (n_portfolios, n_assets)
+    weights = raw / raw.sum(axis=1, keepdims=True)  # shape: (n_portfolios, n_assets)
 
     # ── B: Expected annual return per portfolio ──────────────────────────────
     # Dot product: for each portfolio, sum(weight_i × mu_i) over all assets
-    port_returns = weights @ annual_mu                # shape: (n_portfolios,)
+    port_returns = weights @ annual_mu  # shape: (n_portfolios,)
 
     # ── C: Annual variance per portfolio (quadratic form wᵀ Σ w) ────────────
     port_variances = np.einsum("pi,ij,pj->p", weights, annual_sigma, weights)
@@ -265,7 +267,7 @@ def simulate_random_portfolios(
     # rounding errors in the matrix multiplication — variance can never be
     # negative in theory, but floating-point arithmetic can produce values
     # like -1e-16 which would cause sqrt to fail with a NaN.
-    port_vols = np.sqrt(np.maximum(port_variances, 0.0))   # shape: (n_portfolios,)
+    port_vols = np.sqrt(np.maximum(port_variances, 0.0))  # shape: (n_portfolios,)
 
     # ── D: Sharpe ratio per portfolio ────────────────────────────────────────
     # np.where(condition, value_if_true, value_if_false) — vectorized if/else
@@ -275,13 +277,13 @@ def simulate_random_portfolios(
         port_vols > 1e-10,
         (port_returns - risk_free_rate) / port_vols,
         0.0,
-    )   # shape: (n_portfolios,)
+    )  # shape: (n_portfolios,)
 
     return {
-        "weights":      weights,
-        "returns":      port_returns,
+        "weights": weights,
+        "returns": port_returns,
         "volatilities": port_vols,
-        "sharpes":      port_sharpes,
+        "sharpes": port_sharpes,
     }
 
 
@@ -345,23 +347,18 @@ def compute_portfolio_stats(
     # Sharpe ratio: excess return above risk-free rate per unit of volatility
     # The conditional prevents division by zero on degenerate portfolios
     sharpe = (
-        float((exp_return - risk_free_rate) / volatility)
-        if volatility > 1e-10
-        else 0.0
+        float((exp_return - risk_free_rate) / volatility) if volatility > 1e-10 else 0.0
     )
 
     # Build the ticker-keyed weight dict, e.g. {"AAPL": 0.71, "TSLA": 0.29}
     # enumerate(tickers) pairs each ticker with its index in the weights array
-    weights_dict = {
-        ticker: float(weights_vec[i])
-        for i, ticker in enumerate(tickers)
-    }
+    weights_dict = {ticker: float(weights_vec[i]) for i, ticker in enumerate(tickers)}
 
     return {
         "expected_return": exp_return,
-        "volatility":      volatility,
-        "sharpe":          sharpe,
-        "weights":         weights_dict,
+        "volatility": volatility,
+        "sharpe": sharpe,
+        "weights": weights_dict,
     }
 
 
@@ -493,7 +490,7 @@ def run_mpt_optimization(
     # Unpack arrays for readability in the steps below
     weights_arr = sim["weights"]
     returns_arr = sim["returns"]
-    vols_arr    = sim["volatilities"]
+    vols_arr = sim["volatilities"]
     sharpes_arr = sim["sharpes"]
 
     # ── Step 6: Identify optimal portfolios ─────────────────────────────────
@@ -510,12 +507,18 @@ def run_mpt_optimization(
     # Now compute the full stats dict for each optimal portfolio using its
     # weight vector (the corresponding row of weights_arr)
     max_sharpe_portfolio = compute_portfolio_stats(
-        weights_arr[max_sharpe_idx],   # weight vector for the best Sharpe row
-        annual_mu, annual_sigma, risk_free_rate, tickers
+        weights_arr[max_sharpe_idx],  # weight vector for the best Sharpe row
+        annual_mu,
+        annual_sigma,
+        risk_free_rate,
+        tickers,
     )
     min_vol_portfolio = compute_portfolio_stats(
-        weights_arr[min_vol_idx],      # weight vector for the lowest vol row
-        annual_mu, annual_sigma, risk_free_rate, tickers
+        weights_arr[min_vol_idx],  # weight vector for the lowest vol row
+        annual_mu,
+        annual_sigma,
+        risk_free_rate,
+        tickers,
     )
 
     # ── Step 7: Compute stats for the user's current portfolio ──────────────
@@ -552,8 +555,8 @@ def run_mpt_optimization(
     frontier_points = [
         {
             "expected_return": float(returns_arr[i]),
-            "volatility":      float(vols_arr[i]),
-            "sharpe":          float(sharpes_arr[i]),
+            "volatility": float(vols_arr[i]),
+            "sharpe": float(sharpes_arr[i]),
         }
         for i in idx
         # float() converts from numpy float64 to Python float for JSON serialization
@@ -563,36 +566,91 @@ def run_mpt_optimization(
 
     # Timing breakdown — same pattern as run_var_analysis() in monte_carlo_var.py
     timing = {
-        "data_fetch_s":   round(t_fetch, 4),
-        "log_returns_s":  round(t_returns, 4),
-        "statistics_s":   round(t_stats, 4),
-        "optimization_s": round(t_opt, 4),   # time for the 5,000-portfolio simulation
-        "total_s":        round(total_elapsed, 4),
+        "data_fetch_s": round(t_fetch, 4),
+        "log_returns_s": round(t_returns, 4),
+        "statistics_s": round(t_stats, 4),
+        "optimization_s": round(t_opt, 4),  # time for the 5,000-portfolio simulation
+        "total_s": round(total_elapsed, 4),
     }
 
     if verbose:
-        # Human-readable summary — only printed when called directly,
-        # never when called from FastAPI (verbose=False)
-        print(f"\n📊  MPT Optimisation — {n_portfolios:,} portfolios in {total_elapsed:.3f}s")
-        print(f"    Max Sharpe:  return={max_sharpe_portfolio['expected_return']:.1%},  "
-              f"vol={max_sharpe_portfolio['volatility']:.1%},  "
-              f"Sharpe={max_sharpe_portfolio['sharpe']:.3f}")
-        print(f"    Min Vol:     return={min_vol_portfolio['expected_return']:.1%},  "
-              f"vol={min_vol_portfolio['volatility']:.1%},  "
-              f"Sharpe={min_vol_portfolio['sharpe']:.3f}")
-        print(f"    Current:     return={current_portfolio['expected_return']:.1%},  "
-              f"vol={current_portfolio['volatility']:.1%},  "
-              f"Sharpe={current_portfolio['sharpe']:.3f}")
+        print(f"\n{'=' * 60}")
+        print("📊  MPT OPTIMISATION REPORT — Riskfolio")
+        print(f"{'=' * 60}")
+        print(f"\n🎲  SIMULATIONS:     {n_portfolios:,} random portfolios")
+        print(f"⏱️   RUNTIME:         {total_elapsed:.3f}s")
+        print(f"💹  RISK-FREE RATE:  {risk_free_rate:.1%} annualised")
+
+        def _print_portfolio(label: str, portfolio: dict, emoji: str) -> None:
+            """Helper to print a single portfolio's stats and weights cleanly."""
+            print(f"\n{'-' * 60}")
+            print(f"{emoji}  {label}")
+            print(f"{'-' * 60}")
+            print(f"    Expected Return:  {portfolio['expected_return']:.2%}")
+            print(f"    Volatility:       {portfolio['volatility']:.2%}")
+            print(f"    Sharpe Ratio:     {portfolio['sharpe']:.3f}")
+            print("\n    Allocation:")
+            for ticker, weight in sorted(
+                portfolio["weights"].items(),
+                key=lambda x: x[1],
+                reverse=True,
+            ):
+                bar = "█" * int(weight * 30)
+                print(f"        {ticker:<8} {weight:>6.1%}  {bar}")
+
+        _print_portfolio(
+            "MAX SHARPE (Optimal — best return per unit of risk)",
+            max_sharpe_portfolio,
+            "🟢",
+        )
+        _print_portfolio(
+            "MIN VOLATILITY (Least risky allocation)", min_vol_portfolio, "🔵"
+        )
+        _print_portfolio("YOUR CURRENT PORTFOLIO", current_portfolio, "🟡")
+
+        print(f"\n{'-' * 60}")
+        print("💡  INSIGHT")
+        print(f"{'-' * 60}")
+
+        sharpe_improvement = (
+            max_sharpe_portfolio["sharpe"] - current_portfolio["sharpe"]
+        )
+        vol_improvement = (
+            current_portfolio["volatility"] - min_vol_portfolio["volatility"]
+        )
+
+        print(f"""
+    Rebalancing to Max Sharpe would improve your Sharpe ratio
+    by {sharpe_improvement:+.3f} ({current_portfolio["sharpe"]:.3f} → {max_sharpe_portfolio["sharpe"]:.3f}).
+
+    Rebalancing to Min Vol would reduce your annual volatility
+    by {vol_improvement:.1%} ({current_portfolio["volatility"]:.1%} → {min_vol_portfolio["volatility"]:.1%}).
+
+    If your current portfolio sits inside the frontier cloud,
+    you could get a better risk-return profile without changing
+    which stocks you hold — just the allocation.
+        """)
+
+        print(f"\n{'-' * 60}")
+        print("⏱️   RUNTIME BREAKDOWN")
+        print(f"{'-' * 60}")
+        print(f"    Data Fetch (yfinance):       {timing['data_fetch_s']:.4f}s")
+        print(f"    Log Returns Computation:     {timing['log_returns_s']:.4f}s")
+        print(f"    Mean & Covariance Matrix:    {timing['statistics_s']:.4f}s")
+        print(f"    Portfolio Simulation:        {timing['optimization_s']:.4f}s")
+        print(f"    {'─' * 38}")
+        print(f"    Total Runtime:               {timing['total_s']:.4f}s")
+        print(f"{'=' * 60}\n")
 
     return {
-        "tickers":              tickers,
-        "frontier_points":      frontier_points,
+        "tickers": tickers,
+        "frontier_points": frontier_points,
         "max_sharpe_portfolio": max_sharpe_portfolio,
-        "min_vol_portfolio":    min_vol_portfolio,
-        "current_portfolio":    current_portfolio,
-        "risk_free_rate":       risk_free_rate,
-        "n_portfolios":         n_portfolios,
-        "timing":               timing,
+        "min_vol_portfolio": min_vol_portfolio,
+        "current_portfolio": current_portfolio,
+        "risk_free_rate": risk_free_rate,
+        "n_portfolios": n_portfolios,
+        "timing": timing,
     }
 
 
