@@ -19,13 +19,14 @@ Riskfolio is a web platform where users input their stock portfolio and the syst
 | Vectorized Monte Carlo Engine (10,000+ GBM simulations) | ✅ Complete |
 | Value at Risk (VaR) — 95% confidence interval | ✅ Complete |
 | Expected Shortfall (CVaR) — average tail loss | ✅ Complete |
-| Automated Pytest Suite | ✅ Complete |
+| MPT Optimizer — Efficient Frontier with Max Sharpe and Min Vol portfolios | ✅ Complete |
+| Automated Pytest Suite (61 tests) | ✅ Complete |
 
 ---
 
 ## Tech Stack
 
-**Frontend:** React (Next.js) · Tailwind CSS · Plotly.js
+**Frontend:** React (Next.js) · Tailwind CSS · Recharts
 
 **Backend:** FastAPI (Python)
 
@@ -47,7 +48,8 @@ Riskfolio/
 │   │   ├── models.py                # Pydantic request/response models
 │   │   └── engine/
 │   │       ├── __init__.py
-│   │       └── monte_carlo_var.py   # Monte Carlo VaR engine
+│   │       ├── monte_carlo_var.py   # Monte Carlo VaR engine
+│   │       └── mpt_optimizer.py     # MPT Efficient Frontier optimizer
 │   ├── tests/                       # Pytest test suite
 │   ├── pyproject.toml               # uv project metadata and dependencies
 │   └── uv.lock                      # locked backend dependency graph
@@ -58,6 +60,7 @@ Riskfolio/
 ├── .github/
 │   └── workflows/
 │       └── test.yml                 # GitHub Actions CI/CD pipeline (TBD for future milestones)
+├── .env.example                     # template — copy to .env for local development
 ├── .gitignore
 └── README.md
 ```
@@ -66,106 +69,231 @@ Riskfolio/
 
 ## Getting Started
 
-### Prerequisites
+### Step 1 — Install global prerequisites
 
-- Python 3.13
-- [uv](https://docs.astral.sh/uv/) for backend dependency management
-- Node.js 20+ (Node 22 recommended)
-- pnpm managed by Corepack
-- Docker Desktop, if using Docker Compose
+These tools are installed once on your machine and used across all projects.
 
-Install the local toolchain if needed:
+---
 
+**uv** — Python package manager for the backend.
+
+Mac / Linux:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-corepack enable
 ```
 
-The frontend pins its package manager in `frontend/package.json`, so Corepack
-will resolve the project pnpm version automatically. Prefer this over
-`npm install -g pnpm` or the pnpm shell installer, which can leave contributors
-on different global pnpm versions.
+Windows (PowerShell):
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
 
-Clone the repo and create your local environment file:
+After installing, close and reopen your terminal so `uv` is on your PATH.
+
+---
+
+**Node.js 22** — JavaScript runtime required for the frontend.
+
+Mac / Linux — install via nvm (Node version manager):
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | sh
+```
+Close and reopen your terminal, then:
+```bash
+nvm install 22
+nvm use 22
+```
+
+Windows — download the Node.js 22 installer directly from https://nodejs.org and run it.
+
+---
+
+**pnpm** — frontend package manager, installed via Corepack which ships with Node:
+```bash
+corepack enable
+corepack prepare pnpm@latest --activate
+```
+
+The frontend pins its package manager version in `frontend/package.json`, so
+Corepack resolves the correct pnpm version automatically. Prefer this over
+`npm install -g pnpm` or the standalone pnpm installer, which can leave
+contributors on different global pnpm versions.
+
+---
+
+**Docker Desktop** — optional, but recommended. Lets you run the entire app
+with a single command without managing two terminals.
+
+Download from https://www.docker.com/products/docker-desktop/ and install it
+like any desktop application.
+
+---
+
+### Step 2 — Clone the repo
 
 ```bash
-git clone https://github.com/yourusername/Riskfolio.git
+git clone https://github.com/aayanvatsa04/Riskfolio.git
 cd Riskfolio
+```
+
+---
+
+### Step 3 — Create your local environment file
+
+```bash
 cp .env.example .env
 ```
 
-The root `.env` is used by Docker Compose and documents the default local
-ports. Keep `.env.example` committed, but keep `.env` local.
+The root `.env` stores local port configuration used by Docker Compose.
+Keep `.env.example` committed to the repo, but keep `.env` local — it is
+gitignored and should never be committed.
 
-### Backend Setup
+> **Note:** If you run the app via Docker Compose, `./scripts/compose-up.sh`
+> creates `.env` automatically if it does not exist. The manual `cp` step
+> above is only strictly needed if you are running the app without Docker.
+
+---
+
+### Step 4 — Backend setup
+
+Run these from the `backend/` directory:
 
 ```bash
 cd backend
+
+# Install all Python dependencies into backend/.venv
 uv sync --group dev
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
 
-### uv Quick Guide
-
-Run these commands from `backend/`.
-
-Add a runtime dependency:
-
-```bash
-uv add package-name
-```
-
-Add a development dependency, such as a test or lint tool:
-
-```bash
-uv add --dev package-name
-```
-
-Install dependencies from `uv.lock`:
-
-```bash
-uv sync
-```
-
-`uv sync` creates the backend virtual environment at `backend/.venv` if it does
-not already exist. In VS Code, press `Ctrl+Shift+P`, run `Python: Select
-Interpreter`, and choose the interpreter inside `backend/.venv`.
-
-Run a Python file or module inside the uv-managed environment:
-
-```bash
-uv run python path/to/file.py
-```
-
-Install the pre-commit hooks after syncing development dependencies:
-
-```bash
+# Set up git hooks so ruff runs automatically on every commit
 uv run pre-commit install
 ```
 
-Run all hooks manually:
+To configure VS Code to use the project Python interpreter, open the command
+palette (`Ctrl+Shift+P` on Windows/Linux, `Cmd+Shift+P` on Mac), run
+`Python: Select Interpreter`, and choose the interpreter inside `backend/.venv`.
+
+---
+
+### Step 5 — Frontend setup
 
 ```bash
-uv run pre-commit run --all-files
+cd frontend
+pnpm install
 ```
 
-Verify the API from another terminal:
+---
+
+## Running the App
+
+### Option A — Docker Compose (recommended)
+
+Make sure Docker Desktop is open and running, then from the repo root:
 
 ```bash
+./scripts/compose-up.sh
+```
+
+This starts from frontend port `3000` and backend port `8000`. If either port
+is occupied, the script increments until it finds a free port and writes the
+selected values to `.env`.
+
+The script prints the exact URLs when ready:
+
+```text
+Using backend:  http://localhost:8000
+Using frontend: http://localhost:3000
+```
+
+Open `http://localhost:3000` in your browser.
+
+To stop the stack:
+```bash
+docker compose down
+```
+
+To start on a different port range:
+```bash
+FRONTEND_PORT_START=3005 ./scripts/compose-up.sh
+```
+
+To reset or customise ports, edit `.env` directly or recopy from the template:
+```bash
+cp .env.example .env
+```
+
+---
+
+### Option B — Manual (two terminals)
+
+Open two terminal windows simultaneously and run one command in each.
+
+**Terminal 1 — backend:**
+```bash
+cd backend
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Wait until you see:
+```
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+```
+
+**Terminal 2 — frontend:**
+```bash
+cd frontend
+pnpm exec next dev --port 3000
+```
+
+Wait until you see:
+```
+ready - started server on http://localhost:3000
+```
+
+Open `http://localhost:3000` in your browser.
+
+By default the frontend calls `http://localhost:8000` for the API. If the
+backend is running on a different port, pass the URL explicitly:
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8001 pnpm exec next dev --port 3000
+```
+
+---
+
+## Verifying the App is Working
+
+Once running, confirm all endpoints respond:
+
+```bash
+# Health check
 curl http://localhost:8000/api/v1/health
+
+# Historical prices
 curl "http://localhost:8000/api/v1/historical-prices?tickers=AAPL&period=5d"
+
+# VaR analysis
+curl -s http://localhost:8000/api/v1/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"holdings":[{"ticker":"AAPL","quantity":10},{"ticker":"MSFT","quantity":5}],"horizon":1}' \
+  | python3 -m json.tool | head -20
+
+# MPT optimizer
+curl -s http://localhost:8000/api/v1/optimize \
+  -H "Content-Type: application/json" \
+  -d '{"holdings":[{"ticker":"AAPL","quantity":10},{"ticker":"MSFT","quantity":5}]}' \
+  | python3 -m json.tool | head -20
 ```
 
-The main API endpoints are:
+---
+
+## API Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/v1/health` | Health check |
 | `GET` | `/api/v1/historical-prices?tickers=AAPL&period=5d` | Fetch historical prices |
-| `POST` | `/api/v1/analyze` | Analyze holdings by ticker and quantity |
+| `POST` | `/api/v1/analyze` | Monte Carlo VaR analysis |
+| `POST` | `/api/v1/optimize` | MPT Efficient Frontier optimization |
 
-Example `/api/v1/analyze` payload:
-
+**Example `/api/v1/analyze` payload:**
 ```json
 {
   "holdings": [
@@ -178,97 +306,77 @@ Example `/api/v1/analyze` payload:
 }
 ```
 
-### Frontend Setup
-
-Open a second terminal:
-
-```bash
-cd frontend
-pnpm install
-pnpm exec next dev --port 3000
+**Example `/api/v1/optimize` payload:**
+```json
+{
+  "holdings": [
+    { "ticker": "AAPL", "quantity": 10 },
+    { "ticker": "MSFT", "quantity": 5 }
+  ],
+  "n_portfolios": 5000,
+  "risk_free_rate": 0.05
+}
 ```
 
-Open `http://localhost:3000`.
+---
 
-By default, the frontend calls `http://localhost:8000` for the API. If the
-backend is running on another port, pass the API URL when starting Next:
-
-```bash
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8001 pnpm exec next dev --port 3000
-```
-
-### Running the Monte Carlo Engine (standalone)
-
-```python
-from app.engine.monte_carlo_var import run_var_analysis
-
-results = run_var_analysis(
-    portfolio={"AAPL": 0.40, "TSLA": 0.30, "GOOGL": 0.30},
-    portfolio_value=10_000,   # Current market value in USD
-    horizon=1,                # 1-day VaR
-    confidence_level=0.95,
-    n_simulations=10_000,
-    verbose=True              # set to False when calling from FastAPI
-)
-```
-
-### Running Tests
+## Running Tests
 
 ```bash
 cd backend
 uv run pytest
-uv run ruff check main.py app tests
+uv run ruff check app/
 ```
 
 Frontend checks:
-
 ```bash
 cd frontend
 pnpm exec tsc --noEmit
 pnpm run build
 ```
 
-### Running With Docker Compose
+---
 
+## Running the Engines Standalone
+
+Both engines can be run directly for development and debugging. Each prints
+a full human-readable report when run this way.
+
+**Monte Carlo VaR engine:**
 ```bash
-./scripts/compose-up.sh
+cd backend
+uv run python -m app.engine.monte_carlo_var
 ```
 
-This starts from frontend port `3000` and backend port `8000`. If either port
-is occupied, the script increments until it finds a free port and writes the
-selected values to `.env`.
-
-The script prints the exact URLs to open, for example:
-
-```text
-Using backend:  http://localhost:8000
-Using frontend: http://localhost:3000
-```
-
-The frontend is configured with `NEXT_PUBLIC_API_BASE_URL` from `.env`, so
-browser requests call the selected host-mapped backend directly.
-
-The default Compose ports are in `.env`. Copy `.env.example` if you need to
-reset or customize local values.
-
-Useful checks:
-
+**MPT optimizer engine:**
 ```bash
-curl http://localhost:8000/api/v1/health
-curl "http://localhost:8000/api/v1/historical-prices?tickers=AAPL&period=5d"
+cd backend
+uv run python -m app.engine.mpt_optimizer
 ```
 
-Stop the stack with:
+> **Note:** Always use `python -m app.engine.<module>` from the `backend/`
+> directory, not `python app/engine/<module>.py` directly. The `-m` flag
+> ensures Python resolves imports relative to `backend/` where the `app`
+> package lives.
 
-```bash
-docker compose down
-```
+---
 
-If you want a different starting range, set it in `.env` or when starting:
+## uv Quick Reference
 
-```bash
-FRONTEND_PORT_START=3005 ./scripts/compose-up.sh
-```
+Run all commands from `backend/`.
+
+| Task | Command |
+|---|---|
+| Install all dependencies | `uv sync --group dev` |
+| Add a runtime dependency | `uv add package-name` |
+| Add a dev-only dependency | `uv add --dev package-name` |
+| Run a Python file or command | `uv run python path/to/file.py` |
+| Install pre-commit hooks | `uv run pre-commit install` |
+| Run all hooks manually | `uv run pre-commit run --all-files` |
+
+`uv sync` creates `backend/.venv` automatically if it does not already exist.
+The `uv.lock` file pins exact dependency versions — commit it to the repo so
+all contributors use identical package versions.
 
 ---
 
@@ -276,10 +384,11 @@ FRONTEND_PORT_START=3005 ./scripts/compose-up.sh
 
 | Practice | Implementation |
 |---|---|
-| Modular Architecture | Monte Carlo engine strictly decoupled from FastAPI layer |
-| Test-Driven Development (TDD) | Pytest suite covering the engine, API, and historical price endpoint |
+| Modular Architecture | Monte Carlo and MPT engines strictly decoupled from FastAPI layer |
+| Test-Driven Development (TDD) | 61-test Pytest suite covering both engines, API endpoints, and data pipeline |
 | Branch Protection & PR Workflow | All changes via feature branches and pull requests — direct pushes to main blocked |
 | Conventional Commits | Standardised commit message format enforced across the team |
+| Pre-commit Hooks | Ruff linter and formatter run automatically on every commit |
 
 ---
 
@@ -287,7 +396,7 @@ FRONTEND_PORT_START=3005 ./scripts/compose-up.sh
 
 | Member | Role |
 |---|---|
-| Aayan | Backend · Monte Carlo Engine |
+| Aayan | Backend · Monte Carlo Engine · MPT Optimizer |
 | Yu Yang | Frontend · FastAPI Integration |
 
 ---

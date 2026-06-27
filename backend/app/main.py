@@ -8,7 +8,15 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.engine.monte_carlo_var import fetch_historical_prices, run_var_analysis
-from app.models import HealthResponse, HoldingRequest, PortfolioRequest, VaRResponse
+from app.engine.mpt_optimizer import run_mpt_optimization
+from app.models import (
+    HealthResponse,
+    HoldingRequest,
+    OptimizeRequest,  # ← new
+    OptimizeResponse,  # ← new
+    PortfolioRequest,
+    VaRResponse,
+)
 
 app = FastAPI(
     title="Riskfolio API",
@@ -208,6 +216,76 @@ async def historical_prices(
         "period": period,
         "rows": _serialize_prices(prices),
     }
+
+
+@api_v1.post("/optimize", response_model=OptimizeResponse)
+async def optimize_portfolio(request: OptimizeRequest) -> dict:
+    """
+    POST /api/v1/optimize
+
+    Runs the MPT Efficient Frontier optimization for a given portfolio.
+
+    WHAT THIS ENDPOINT DOES:
+        1. Receives holdings (ticker + quantity pairs) and optimizer settings
+        2. Calls _build_weighted_portfolio() to convert quantities to weights
+           using live market prices — same helper used by /analyze
+        3. Validates that at least 2 distinct tickers exist after deduplication
+           (two holdings of AAPL still = 1 ticker after _combine_holdings())
+        4. Calls run_mpt_optimization() with verbose=False
+        5. Returns the full OptimizeResponse JSON
+
+    REQUEST BODY:  OptimizeRequest  (validated by Pydantic before this runs)
+    RESPONSE BODY: OptimizeResponse
+
+    ERROR RESPONSES:
+        422 Unprocessable Entity — invalid holdings, or duplicate tickers that
+            reduce to fewer than 2 after _combine_holdings() deduplication
+        500 Internal Server Error — unexpected failure (e.g. yfinance down,
+            ticker not found, numpy error)
+    """
+    try:
+        # Reuse the exact same helper that /analyze uses to convert
+        # (ticker, quantity) pairs into portfolio weights via live prices.
+        # _portfolio_value and _holdings are not needed by the optimizer
+        # (it only uses weights), so we prefix them with _ to signal that.
+        portfolio_weights, _portfolio_value, _holdings = _build_weighted_portfolio(
+            request.holdings
+        )
+
+        # After _combine_holdings() merges duplicate tickers, we might end up
+        # with fewer unique tickers than holdings. E.g. two AAPL holdings → one
+        # AAPL entry. Pydantic enforced min_length=2 on the holdings list, but
+        # that checks the number of HoldingRequest objects, not unique tickers.
+        # This check covers that edge case.
+        if len(portfolio_weights) < 2:
+            raise ValueError(
+                "At least 2 distinct tickers are required for optimisation. "
+                "Your holdings resolve to only 1 unique ticker after deduplication."
+            )
+
+        # Run the full MPT pipeline. verbose=False suppresses all print output —
+        # the endpoint returns only the clean results dict as JSON.
+        return run_mpt_optimization(
+            tickers=list(portfolio_weights.keys()),
+            current_weights=portfolio_weights,
+            n_portfolios=request.n_portfolios,
+            risk_free_rate=request.risk_free_rate,
+            verbose=False,
+        )
+
+    except (AssertionError, ValueError) as exc:
+        # AssertionError: from engine internal assertions (e.g. weight sum check)
+        # ValueError: from our validation above or _build_weighted_portfolio
+        # Both are user-caused input problems → 422 Unprocessable Entity
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    except Exception as exc:
+        # Anything else (yfinance network error, numpy failure, etc.) is an
+        # unexpected server-side problem → 500 Internal Server Error
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to complete portfolio optimisation: {exc}",
+        ) from exc
 
 
 app.include_router(api_v1)
