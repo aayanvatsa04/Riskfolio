@@ -98,7 +98,9 @@ function PortfolioStatsCard({
 
       {sortedWeights.length > 0 && (
         <div className="space-y-2 border-t pt-1">
-          <p className="text-xs font-medium text-muted-foreground">Allocation</p>
+          <p className="text-xs font-medium text-muted-foreground">
+            Allocation
+          </p>
           {sortedWeights.map(([ticker, weight]) => (
             <WeightBar key={ticker} ticker={ticker} weight={weight} />
           ))}
@@ -160,13 +162,12 @@ export function OptimizerResults({ result }: { result: OptimizerResult }) {
           <p className="leading-relaxed text-muted-foreground">
             Further right on the chart means more volatile. Higher up means
             better expected return. The{" "}
-            <span className="font-medium text-green-600">green dot</span> is
-            the allocation with the highest Sharpe ratio - the most return per
-            unit of risk achievable from{" "}
+            <span className="font-medium text-green-600">green dot</span> is the
+            allocation with the highest Sharpe ratio - the most return per unit
+            of risk achievable from{" "}
             <span className="font-medium text-foreground">{tickerList}</span>.
-            The{" "}
-            <span className="font-medium text-blue-600">blue dot</span> is the
-            least volatile allocation. Your current weighting is shown in{" "}
+            The <span className="font-medium text-blue-600">blue dot</span> is
+            the least volatile allocation. Your current weighting is shown in{" "}
             <span className="font-medium text-amber-600">amber</span> - if it
             sits inside the frontier cloud, rebalancing could improve your
             risk-return profile without changing which stocks you hold.

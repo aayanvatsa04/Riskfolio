@@ -14,9 +14,9 @@ export default function Page() {
             <h1 className="text-4xl font-bold tracking-tight">Riskfolio</h1>
           </div>
           <p className="text-muted-foreground text-lg max-w-2xl mx-auto text-balance">
-            Portfolio risk analysis and efficient frontier optimization for
-            your investment portfolio. Compare downside risk against
-            risk-return trade-offs with the same holdings.
+            Portfolio risk analysis and efficient frontier optimization for your
+            investment portfolio. Compare downside risk against risk-return
+            trade-offs with the same holdings.
           </p>
         </div>
 
