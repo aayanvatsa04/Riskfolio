@@ -143,13 +143,9 @@ cd Riskfolio
 cp .env.example .env
 ```
 
-The root `.env` stores local port configuration used by Docker Compose.
-Keep `.env.example` committed to the repo, but keep `.env` local — it is
-gitignored and should never be committed.
-
-> **Note:** If you run the app via Docker Compose, `./scripts/compose-up.sh`
-> creates `.env` automatically if it does not exist. The manual `cp` step
-> above is only strictly needed if you are running the app without Docker.
+The root `.env` stores local configuration used by Docker Compose and the
+frontend. Keep `.env.example` committed to the repo, but keep `.env` local —
+it is gitignored and should never be committed.
 
 ---
 
@@ -189,35 +185,15 @@ pnpm install
 Make sure Docker Desktop is open and running, then from the repo root:
 
 ```bash
-./scripts/compose-up.sh
+docker compose up --build
 ```
 
-This starts from frontend port `3000` and backend port `8000`. If either port
-is occupied, the script increments until it finds a free port and writes the
-selected values to `.env`.
-
-The script prints the exact URLs when ready:
-
-```text
-Using backend:  http://localhost:8000
-Using frontend: http://localhost:3000
-```
-
-Open `http://localhost:3000` in your browser.
+This starts the frontend on port `3000` and backend on port `8000`. Open
+`http://localhost:3000` in your browser when the services are ready.
 
 To stop the stack:
 ```bash
 docker compose down
-```
-
-To start on a different port range:
-```bash
-FRONTEND_PORT_START=3005 ./scripts/compose-up.sh
-```
-
-To reset or customise ports, edit `.env` directly or recopy from the template:
-```bash
-cp .env.example .env
 ```
 
 ---
