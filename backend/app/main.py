@@ -23,6 +23,7 @@ from app.models import (
     PortfolioRequest,
     VaRResponse,
 )
+from app.settings import settings
 
 app = FastAPI(
     title="Riskfolio API",
@@ -37,6 +38,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        settings.NEXT_PUBLIC_ORIGIN,
     ],
     allow_credentials=True,
     allow_methods=["*"],

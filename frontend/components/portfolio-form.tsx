@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { apiBaseUrl } from "@/lib/api"
 import { portfolioDb, type SavedPortfolio } from "@/lib/portfolio-db"
 import {
   OptimizerResults,
@@ -136,8 +137,8 @@ export function PortfolioForm() {
   const [portfolioName, setPortfolioName] = useState("")
   const [saveStatus, setSaveStatus] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
-  const ENDPOINT =
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
+
+  const ENDPOINT = apiBaseUrl
 
   const createBlankEntry = (): PortfolioEntry => ({
     id: Date.now().toString(),
@@ -751,7 +752,7 @@ export function PortfolioForm() {
                 }
               >
                 <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="var">VaR analysis</TabsTrigger>
+                  <TabsTrigger value="var">Value at Risk Analysis</TabsTrigger>
                   <TabsTrigger value="optimize">Efficient frontier</TabsTrigger>
                 </TabsList>
               </Tabs>
@@ -835,10 +836,7 @@ export function PortfolioForm() {
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Optimization needs at least two distinct tickers. The frontend
-                  sends the current weighted holdings to the backend optimizer
-                  and renders the efficient frontier chart when the response
-                  returns.
+                  Optimization needs at least two distinct tickers.{" "}
                 </p>
               </div>
             )}

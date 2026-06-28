@@ -166,7 +166,7 @@ export function EfficientFrontierChart({
 
   return (
     <ResponsiveContainer width="100%" height={380}>
-      <ScatterChart margin={{ top: 24, right: 24, bottom: 52, left: 52 }}>
+      <ScatterChart margin={{ top: 24, right: 24, bottom: 52, left: 100 }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
         <XAxis
           type="number"
@@ -192,7 +192,7 @@ export function EfficientFrontierChart({
           label={{
             value: "Expected Annual Return (%)",
             angle: -90,
-            offset: -50,
+            dx: -48,
             style: { fontSize: 12, fill: "hsl(var(--muted-foreground))" },
           }}
           tickFormatter={(value) => Number(value).toFixed(1)}
