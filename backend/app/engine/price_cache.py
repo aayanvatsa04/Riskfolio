@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from typing import cast
 
 import pandas as pd
 from postgrest.types import ReturnMethod
-from supabase import Client
+from supabase import Client, create_client
 
 from app.db_types import PublicPriceHistoryInsert
 from app.supabase import supabase
@@ -55,6 +56,8 @@ class SupabasePriceCache:
     table: str = "price_history"
     timeout_s: float = 10.0
     supabase: Client | None = supabase
+    supabase_url: str | None = None
+    api_key: str | None = field(default=None, repr=False)
 
     @property
     def enabled(self) -> bool:
@@ -132,3 +135,16 @@ class SupabasePriceCache:
                 on_conflict="ticker,price_date",
                 returning=ReturnMethod.minimal,
             ).execute()
+
+
+def build_supabase_price_cache_from_env() -> SupabasePriceCache | None:
+    supabase_url = os.getenv("SUPABASE_URL")
+    api_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
+    if not supabase_url or not api_key:
+        return None
+
+    return SupabasePriceCache(
+        supabase=create_client(supabase_url=supabase_url, supabase_key=api_key),
+        supabase_url=supabase_url,
+        api_key=api_key,
+    )

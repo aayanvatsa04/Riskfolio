@@ -28,9 +28,11 @@ extend-select = [
     "SIM",  # simplify code
     "C4",   # better comprehensions
     "FA",   # future annotations
-    "RUF",  # Ruff-specific rules
 ]
-ignore = ["RUF002", "RUF003"]
+
+exclude = [
+    "app/db_types.py"
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

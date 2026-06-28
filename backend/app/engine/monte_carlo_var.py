@@ -29,9 +29,26 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from app.engine.price_cache import SupabasePriceCache
+from app.engine.price_cache import (
+    SupabasePriceCache,
+    build_supabase_price_cache_from_env,
+)
 
-_PRICE_CACHE = SupabasePriceCache()
+_PRICE_CACHE = build_supabase_price_cache_from_env() or SupabasePriceCache()
+
+MIN_CACHE_COMPLETENESS_RATIO = 0.85
+MIN_TRADING_DAYS_BY_PERIOD = {
+    "1d": 1,
+    "5d": 4,
+    "1mo": 18,
+    "3mo": 54,
+    "6mo": 107,
+    "1y": 214,
+    "2y": 428,
+    "5y": 1_071,
+    "10y": 2_142,
+}
+CACHE_FRESHNESS_DAYS = 7
 
 # ─────────────────────────────────────────────
 # SECTION 1: DATA INGESTION
@@ -65,6 +82,40 @@ def _price_period_window(
     return end_date - offset, end_date
 
 
+def _minimum_cached_trading_days(
+    period: str,
+    start_date: pd.Timestamp | None,
+    end_date: pd.Timestamp | None,
+) -> int | None:
+    if period in MIN_TRADING_DAYS_BY_PERIOD:
+        return MIN_TRADING_DAYS_BY_PERIOD[period]
+    if period == "ytd" and start_date is not None and end_date is not None:
+        business_days = len(pd.bdate_range(start=start_date, end=end_date))
+        return max(1, int(business_days * MIN_CACHE_COMPLETENESS_RATIO))
+    return None
+
+
+def _cache_covers_requested_period(
+    prices: pd.DataFrame,
+    period: str,
+    start_date: pd.Timestamp | None,
+    end_date: pd.Timestamp | None,
+) -> bool:
+    if prices.empty:
+        return False
+
+    minimum_rows = _minimum_cached_trading_days(period, start_date, end_date)
+    if minimum_rows is None or len(prices) < minimum_rows:
+        return False
+
+    if end_date is None:
+        return True
+
+    latest_cached_date = pd.Timestamp(prices.index.max()).date()
+    requested_end_date = pd.Timestamp(end_date).date()
+    return (requested_end_date - latest_cached_date).days <= CACHE_FRESHNESS_DAYS
+
+
 def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFrame:
     """
     Download adjusted daily closing prices for a list of tickers
@@ -84,9 +135,16 @@ def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFr
         start_date, end_date = _price_period_window(period)
         try:
             cached_prices = _PRICE_CACHE.query_prices(tickers, start_date, end_date)
-            if not cached_prices.empty:
+            if _cache_covers_requested_period(
+                cached_prices, period, start_date, end_date
+            ):
                 print(f"✅ Retrieved {len(cached_prices)} cached trading days.\n")
                 return cached_prices
+            if not cached_prices.empty:
+                print(
+                    "ℹ️ Cached price data is incomplete for "
+                    f"{period} ({len(cached_prices)} trading days); refreshing."
+                )
         except Exception as exc:
             print(
                 f"⚠️ Supabase price cache query failed; falling back to yfinance: {exc}"
@@ -296,8 +354,7 @@ def run_monte_carlo_price_paths(
     z = np.random.standard_normal((horizon, n_assets, n_paths))
     correlated_shocks = np.einsum("ij,tjn->tin", L, z)
     daily_log_returns = (
-        mu[np.newaxis, :, np.newaxis]
-        + correlated_shocks * volatility_multiplier
+        mu[np.newaxis, :, np.newaxis] + correlated_shocks * volatility_multiplier
     )
 
     cumulative_log_returns = np.cumsum(daily_log_returns, axis=0)

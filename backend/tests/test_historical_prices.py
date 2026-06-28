@@ -86,10 +86,10 @@ def test_supabase_price_cache_ignores_anon_key(monkeypatch):
 def test_fetch_historical_prices_uses_supabase_cache(monkeypatch):
     cached_prices = pd.DataFrame(
         {
-            "AAPL": [190.5, 191.25],
-            "TSLA": [250.0, 252.75],
+            "AAPL": [188.0, 189.25, 190.5, 191.25],
+            "TSLA": [247.5, 249.0, 250.0, 252.75],
         },
-        index=pd.to_datetime(["2026-06-25", "2026-06-26"]),
+        index=pd.to_datetime(["2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26"]),
     )
 
     class FakeCache:
@@ -123,6 +123,71 @@ def test_fetch_historical_prices_uses_supabase_cache(monkeypatch):
     pd.testing.assert_frame_equal(prices, cached_prices)
     assert len(fake_cache.query_calls) == 1
     assert fake_cache.upsert_calls == []
+
+
+def test_fetch_historical_prices_refreshes_partial_supabase_cache(monkeypatch):
+    cached_prices = pd.DataFrame(
+        {
+            "AAPL": [190.5, 191.25, 192.0, 193.5, 194.0],
+            "TSLA": [250.0, 252.75, 253.0, 254.25, 255.0],
+        },
+        index=pd.to_datetime(
+            [
+                "2026-06-22",
+                "2026-06-23",
+                "2026-06-24",
+                "2026-06-25",
+                "2026-06-26",
+            ]
+        ),
+    )
+
+    class FakeCache:
+        def __init__(self) -> None:
+            self.query_calls = []
+            self.upsert_calls = []
+
+        def query_prices(self, tickers, start_date=None, end_date=None):
+            self.query_calls.append(
+                {
+                    "tickers": tickers,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                }
+            )
+            return cached_prices
+
+        def upsert_prices(self, prices, source="yfinance"):
+            self.upsert_calls.append({"prices": prices, "source": source})
+
+    fake_cache = FakeCache()
+    monkeypatch.setattr(monte_carlo_var, "_PRICE_CACHE", fake_cache)
+
+    downloaded_prices = pd.DataFrame(
+        {
+            "AAPL": [100.0] * 1_071,
+            "TSLA": [50.0] * 1_071,
+        },
+        index=pd.bdate_range(end="2026-06-26", periods=1_071),
+    )
+
+    def fake_download(tickers, period="5y", auto_adjust=True, progress=False):
+        assert tickers == ["AAPL", "TSLA"]
+        assert period == "5y"
+        assert auto_adjust is True
+        assert progress is False
+        return pd.concat({"Close": downloaded_prices}, axis=1)
+
+    monkeypatch.setattr("app.engine.monte_carlo_var.yf.download", fake_download)
+
+    prices = monte_carlo_var.fetch_historical_prices(["AAPL", "TSLA"], period="5y")
+
+    pd.testing.assert_frame_equal(prices, downloaded_prices)
+    assert len(fake_cache.query_calls) == 1
+    assert len(fake_cache.upsert_calls) == 1
+    pd.testing.assert_frame_equal(
+        fake_cache.upsert_calls[0]["prices"], downloaded_prices
+    )
 
 
 def test_fetch_historical_prices_backfills_supabase_cache(monkeypatch):
