@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+import math
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.models.common import HoldingRequest
+
+
+class PortfolioPoint(BaseModel):
+    expected_return: float
+    volatility: float
+    sharpe: float
+    weights: dict[str, float] | None = None
+
+
+class FrontierPoint(BaseModel):
+    expected_return: float
+    volatility: float
+    sharpe: float
+
+
+class OptimizeRequest(BaseModel):
+    holdings: list[HoldingRequest] = Field(
+        ...,
+        description=(
+            "Portfolio holdings as ticker + quantity pairs. "
+            "At least 2 distinct tickers are required."
+        ),
+        min_length=2,
+        max_length=20,
+    )
+    n_portfolios: int = Field(
+        default=5_000,
+        ge=500,
+        le=50_000,
+        description="Number of random portfolios to simulate.",
+    )
+    risk_free_rate: float = Field(
+        default=0.05,
+        ge=0.0,
+        lt=1.0,
+        description="Annualised risk-free rate used in the Sharpe ratio.",
+    )
+
+    @field_validator("risk_free_rate")
+    @classmethod
+    def validate_finite_rate(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("Risk-free rate must be a finite number")
+        return value
+
+
+class OptimizeTimingBreakdown(BaseModel):
+    data_fetch_s: float
+    log_returns_s: float
+    statistics_s: float
+    optimization_s: float
+    total_s: float
+
+
+class OptimizeResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    tickers: list[str]
+    frontier_points: list[FrontierPoint]
+    max_sharpe_portfolio: PortfolioPoint
+    min_vol_portfolio: PortfolioPoint
+    current_portfolio: PortfolioPoint
+    risk_free_rate: float
+    n_portfolios: int
+    timing: OptimizeTimingBreakdown | dict[str, Any]

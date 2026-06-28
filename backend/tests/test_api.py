@@ -182,6 +182,97 @@ def test_analyze_reports_engine_failures(monkeypatch):
     assert "market data unavailable" in response.json()["detail"]
 
 
+def test_monte_carlo_paths_calls_engine_with_slider_payload(monkeypatch):
+    fetch_calls = []
+    engine_calls = []
+
+    def fake_fetch_historical_prices(
+        tickers: list[str], period: str = "5y"
+    ) -> pd.DataFrame:
+        fetch_calls.append({"tickers": tickers, "period": period})
+        return pd.DataFrame(
+            {"AAPL": [100.0], "MSFT": [200.0]},
+            index=pd.to_datetime(["2026-05-29"]),
+        )
+
+    def fake_run_price_path_analysis(**kwargs):
+        engine_calls.append(kwargs)
+        return {
+            "horizon": kwargs["horizon"],
+            "n_paths": kwargs["n_paths"],
+            "volatility_multiplier": kwargs["volatility_multiplier"],
+            "portfolio_value": kwargs["portfolio_value"],
+            "portfolio_weights": kwargs["portfolio"],
+            "summary": [
+                {
+                    "day": 0,
+                    "mean": 2000.0,
+                    "p05": 2000.0,
+                    "p50": 2000.0,
+                    "p95": 2000.0,
+                },
+                {
+                    "day": 1,
+                    "mean": 2010.0,
+                    "p05": 1900.0,
+                    "p50": 2005.0,
+                    "p95": 2125.0,
+                },
+            ],
+            "paths": [
+                {
+                    "path_id": 1,
+                    "points": [
+                        {"day": 0, "value": 2000.0},
+                        {"day": 1, "value": 2010.0},
+                    ],
+                }
+            ],
+            "timing": {"total_s": 0.01},
+        }
+
+    monkeypatch.setattr(
+        "app.main.fetch_historical_prices", fake_fetch_historical_prices
+    )
+    monkeypatch.setattr(
+        "app.main.run_price_path_analysis", fake_run_price_path_analysis
+    )
+
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/api/v1/monte-carlo-paths",
+            json={
+                "holdings": [
+                    {"ticker": "aapl", "quantity": 10},
+                    {"ticker": "MSFT", "quantity": 5},
+                ],
+                "horizon": 45,
+                "n_paths": 80,
+                "volatility_multiplier": 1.35,
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["horizon"] == 45
+    assert body["n_paths"] == 80
+    assert body["volatility_multiplier"] == 1.35
+    assert body["portfolio_value"] == 2000.0
+    assert body["summary"][1]["p95"] == 2125.0
+    assert fetch_calls == [{"tickers": ["AAPL", "MSFT"], "period": "5d"}]
+    assert engine_calls == [
+        {
+            "portfolio": {"AAPL": 0.5, "MSFT": 0.5},
+            "portfolio_value": 2000.0,
+            "horizon": 45,
+            "n_paths": 80,
+            "volatility_multiplier": 1.35,
+        }
+    ]
+
+
 def test_unversioned_analyze_route_is_not_registered():
     response = asyncio.run(
         _request(

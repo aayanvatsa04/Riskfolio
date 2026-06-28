@@ -21,6 +21,7 @@ from app.engine.monte_carlo_var import (
     compute_log_returns,
     compute_statistics,
     run_monte_carlo,
+    run_monte_carlo_price_paths,
 )
 
 # ─────────────────────────────────────────────
@@ -246,6 +247,59 @@ class TestRunMonteCarlo:
         np.random.seed(42)
         result_22day = run_monte_carlo(mu, sigma, sample_weights, 10_000, 22, 10_000)
         assert np.std(result_22day) > np.std(result_1day)
+
+
+class TestRunMonteCarloPricePaths:
+    def test_output_shape_includes_initial_day(self, sample_statistics, sample_weights):
+        """
+        Price paths should include day 0 plus one row for each simulated
+        trading day.
+        """
+        mu, sigma = sample_statistics
+        result = run_monte_carlo_price_paths(
+            mu, sigma, sample_weights, 10_000, horizon=22, n_paths=50
+        )
+
+        assert result.shape == (23, 50)
+
+    def test_initial_row_is_current_portfolio_value(
+        self, sample_statistics, sample_weights
+    ):
+        """Every path should start at the current market value."""
+        mu, sigma = sample_statistics
+        result = run_monte_carlo_price_paths(
+            mu, sigma, sample_weights, 10_000, horizon=5, n_paths=25
+        )
+
+        assert np.allclose(result[0], 10_000)
+
+    def test_higher_volatility_multiplier_increases_spread(
+        self, sample_statistics, sample_weights
+    ):
+        """The frontend volatility lever should visibly widen the paths."""
+        mu, sigma = sample_statistics
+        np.random.seed(42)
+        low_vol = run_monte_carlo_price_paths(
+            mu,
+            sigma,
+            sample_weights,
+            10_000,
+            horizon=22,
+            n_paths=1000,
+            volatility_multiplier=0.5,
+        )
+        np.random.seed(42)
+        high_vol = run_monte_carlo_price_paths(
+            mu,
+            sigma,
+            sample_weights,
+            10_000,
+            horizon=22,
+            n_paths=1000,
+            volatility_multiplier=2.0,
+        )
+
+        assert np.std(high_vol[-1]) > np.std(low_vol[-1])
 
 
 # ─────────────────────────────────────────────

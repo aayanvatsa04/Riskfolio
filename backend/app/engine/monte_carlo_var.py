@@ -263,6 +263,52 @@ def run_monte_carlo(
     return portfolio_pnl
 
 
+def run_monte_carlo_price_paths(
+    mu: np.ndarray,
+    cov_matrix: np.ndarray,
+    weights: np.ndarray,
+    portfolio_value: float,
+    horizon: int,
+    n_paths: int = 100,
+    volatility_multiplier: float = 1.0,
+) -> np.ndarray:
+    """
+    Simulate full portfolio value paths over time for charting.
+
+    Unlike run_monte_carlo(), which returns only the terminal P&L distribution
+    used for VaR, this returns the portfolio value at day 0 and every simulated
+    trading day through the selected horizon.
+
+    Returns:
+        Array of shape (horizon + 1, n_paths), where row 0 is the current
+        portfolio value and each column is one simulated path.
+    """
+    if horizon < 1:
+        raise ValueError("Horizon must be at least 1 trading day")
+    if n_paths < 1:
+        raise ValueError("Number of paths must be positive")
+    if not np.isfinite(volatility_multiplier) or volatility_multiplier <= 0:
+        raise ValueError("Volatility multiplier must be positive")
+
+    n_assets = len(mu)
+    L = cholesky_decomposition(cov_matrix)
+
+    z = np.random.standard_normal((horizon, n_assets, n_paths))
+    correlated_shocks = np.einsum("ij,tjn->tin", L, z)
+    daily_log_returns = (
+        mu[np.newaxis, :, np.newaxis]
+        + correlated_shocks * volatility_multiplier
+    )
+
+    cumulative_log_returns = np.cumsum(daily_log_returns, axis=0)
+    asset_growth = np.exp(cumulative_log_returns)
+    portfolio_growth = np.tensordot(weights, asset_growth, axes=(0, 1))
+    simulated_values = portfolio_value * portfolio_growth
+
+    initial_values = np.full((1, n_paths), portfolio_value)
+    return np.vstack([initial_values, simulated_values])
+
+
 # ─────────────────────────────────────────────
 # SECTION 6: VaR CALCULATION
 # ─────────────────────────────────────────────
@@ -502,6 +548,95 @@ def run_var_analysis(
         print("-" * 60 + "\n")
 
     return results
+
+
+def run_price_path_analysis(
+    portfolio: dict,
+    portfolio_value: float,
+    horizon: int = 22,
+    n_paths: int = 100,
+    volatility_multiplier: float = 1.0,
+) -> dict:
+    """
+    End-to-end Monte Carlo price-path simulation for frontend visualization.
+
+    Uses the same historical data, log-return statistics, covariance matrix,
+    Cholesky correlation handling, and current portfolio-value definition as
+    run_var_analysis(), but returns values through time instead of terminal VaR.
+    """
+    tickers = list(portfolio.keys())
+    weights = np.array(list(portfolio.values()))
+
+    assert abs(weights.sum() - 1.0) < 1e-6, "Portfolio weights must sum to 1.0"
+
+    total_start = time.perf_counter()
+
+    t0 = time.perf_counter()
+    prices = fetch_historical_prices(tickers)
+    t_fetch = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    log_returns = compute_log_returns(prices)
+    t_returns = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    mu, sigma = compute_statistics(log_returns)
+    t_stats = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    path_values = run_monte_carlo_price_paths(
+        mu=mu,
+        cov_matrix=sigma,
+        weights=weights,
+        portfolio_value=portfolio_value,
+        horizon=horizon,
+        n_paths=n_paths,
+        volatility_multiplier=volatility_multiplier,
+    )
+    t_simulation = time.perf_counter() - t0
+
+    total_elapsed = time.perf_counter() - total_start
+
+    summary = []
+    for day, values in enumerate(path_values):
+        summary.append(
+            {
+                "day": day,
+                "mean": float(np.mean(values)),
+                "p05": float(np.percentile(values, 5)),
+                "p50": float(np.percentile(values, 50)),
+                "p95": float(np.percentile(values, 95)),
+            }
+        )
+
+    paths = []
+    for path_index in range(path_values.shape[1]):
+        paths.append(
+            {
+                "path_id": path_index + 1,
+                "points": [
+                    {"day": day, "value": float(value)}
+                    for day, value in enumerate(path_values[:, path_index])
+                ],
+            }
+        )
+
+    return {
+        "horizon": horizon,
+        "n_paths": n_paths,
+        "volatility_multiplier": volatility_multiplier,
+        "portfolio_value": portfolio_value,
+        "portfolio_weights": portfolio,
+        "summary": summary,
+        "paths": paths,
+        "timing": {
+            "data_fetch_s": round(t_fetch, 4),
+            "log_returns_s": round(t_returns, 4),
+            "statistics_s": round(t_stats, 4),
+            "monte_carlo_s": round(t_simulation, 4),
+            "total_s": round(total_elapsed, 4),
+        },
+    }
 
 
 # ─────────────────────────────────────────────

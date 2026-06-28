@@ -24,7 +24,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { portfolioDb, type SavedPortfolio } from "@/lib/portfolio-db"
+import {
+  OptimizerResults,
+  type OptimizerResult,
+} from "@/components/optimizer-results"
+import { MonteCarloSimulationChart } from "@/components/monte-carlo-simulation-chart"
 import {
   Trash2,
   Plus,
@@ -82,6 +88,27 @@ interface ApiErrorDetail {
   message?: string
 }
 
+const DEFAULT_N_PORTFOLIOS = "5000"
+const DEFAULT_RISK_FREE_RATE = 0.05
+
+async function getErrorMessage(response: Response) {
+  const errorData = await response.json().catch(() => null)
+
+  if (typeof errorData?.detail === "string") {
+    return errorData.detail
+  }
+
+  if (Array.isArray(errorData?.detail)) {
+    return errorData.detail
+      .map(
+        (item: ApiErrorDetail) => item.msg || item.message || "Invalid input",
+      )
+      .join(", ")
+  }
+
+  return `Server error: ${response.status}`
+}
+
 export function PortfolioForm() {
   const [entries, setEntries] = useState<PortfolioEntry[]>([
     {
@@ -95,8 +122,12 @@ export function PortfolioForm() {
   const [confidenceLevel, setConfidenceLevel] = useState<number>(95)
   const [horizon, setHorizon] = useState<number>(22)
   const [nSimulations, setNSimulations] = useState<number>(10000)
+  const [analysisMode, setAnalysisMode] = useState<"var" | "optimize">("var")
+  const [nPortfolios, setNPortfolios] = useState<string>(DEFAULT_N_PORTFOLIOS)
   const [isLoading, setIsLoading] = useState(false)
   const [result, setResult] = useState<VaRResult | null>(null)
+  const [optimizerResult, setOptimizerResult] =
+    useState<OptimizerResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [savedPortfolios, setSavedPortfolios] = useState<SavedPortfolio[]>([])
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string | null>(
@@ -144,6 +175,9 @@ export function PortfolioForm() {
     field: keyof PortfolioEntry,
     value: string | number | null,
   ) => {
+    setResult(null)
+    setOptimizerResult(null)
+    setError(null)
     setEntries(
       entries.map((entry) =>
         entry.id === id ? { ...entry, [field]: value } : entry,
@@ -152,6 +186,9 @@ export function PortfolioForm() {
   }
 
   const updateTicker = (id: string, ticker: string) => {
+    setResult(null)
+    setOptimizerResult(null)
+    setError(null)
     setEntries(
       entries.map((entry) =>
         entry.id === id
@@ -165,54 +202,6 @@ export function PortfolioForm() {
           : entry,
       ),
     )
-  }
-
-  const fetchCurrentPrice = async (id: string, ticker: string) => {
-    try {
-      const params = new URLSearchParams({ tickers: ticker, period: "5d" })
-      const response = await fetch(
-        `${ENDPOINT}/api/v1/historical-prices?${params}`,
-      )
-
-      if (!response.ok) {
-        throw new Error(await getErrorMessage(response))
-      }
-
-      const data = await response.json()
-      const latestRow = data.rows?.at(-1)
-      const latestPrice = latestRow?.prices?.[ticker]
-
-      if (typeof latestPrice !== "number" || !Number.isFinite(latestPrice)) {
-        throw new Error(`No current price found for ${ticker}`)
-      }
-
-      setEntries((currentEntries) =>
-        currentEntries.map((entry) =>
-          entry.id === id && entry.ticker.toUpperCase().trim() === ticker
-            ? {
-                ...entry,
-                currentPrice: latestPrice,
-                priceStatus: "loaded",
-                priceError: undefined,
-              }
-            : entry,
-        ),
-      )
-    } catch (err) {
-      setEntries((currentEntries) =>
-        currentEntries.map((entry) =>
-          entry.id === id && entry.ticker.toUpperCase().trim() === ticker
-            ? {
-                ...entry,
-                currentPrice: null,
-                priceStatus: "error",
-                priceError:
-                  err instanceof Error ? err.message : "Failed to fetch price",
-              }
-            : entry,
-        ),
-      )
-    }
   }
 
   useEffect(() => {
@@ -229,7 +218,63 @@ export function PortfolioForm() {
         }
 
         return window.setTimeout(() => {
-          void fetchCurrentPrice(entry.id, ticker)
+          void (async () => {
+            try {
+              const params = new URLSearchParams({
+                tickers: ticker,
+                period: "5d",
+              })
+              const response = await fetch(
+                `${ENDPOINT}/api/v1/historical-prices?${params}`,
+              )
+
+              if (!response.ok) {
+                throw new Error(await getErrorMessage(response))
+              }
+
+              const data = await response.json()
+              const latestRow = data.rows?.at(-1)
+              const latestPrice = latestRow?.prices?.[ticker]
+
+              if (
+                typeof latestPrice !== "number" ||
+                !Number.isFinite(latestPrice)
+              ) {
+                throw new Error(`No current price found for ${ticker}`)
+              }
+
+              setEntries((currentEntries) =>
+                currentEntries.map((currentEntry) =>
+                  currentEntry.id === entry.id &&
+                  currentEntry.ticker.toUpperCase().trim() === ticker
+                    ? {
+                        ...currentEntry,
+                        currentPrice: latestPrice,
+                        priceStatus: "loaded",
+                        priceError: undefined,
+                      }
+                    : currentEntry,
+                ),
+              )
+            } catch (err) {
+              setEntries((currentEntries) =>
+                currentEntries.map((currentEntry) =>
+                  currentEntry.id === entry.id &&
+                  currentEntry.ticker.toUpperCase().trim() === ticker
+                    ? {
+                        ...currentEntry,
+                        currentPrice: null,
+                        priceStatus: "error",
+                        priceError:
+                          err instanceof Error
+                            ? err.message
+                            : "Failed to fetch price",
+                      }
+                    : currentEntry,
+                ),
+              )
+            }
+          })()
         }, 500)
       })
       .filter((timer): timer is number => timer !== null)
@@ -237,7 +282,7 @@ export function PortfolioForm() {
     return () => {
       timers.forEach((timer) => window.clearTimeout(timer))
     }
-  }, [entries])
+  }, [ENDPOINT, entries])
 
   const buildHoldingsRequest = (): PortfolioRequest["holdings"] | null => {
     const validEntries = entries.filter(
@@ -338,6 +383,7 @@ export function PortfolioForm() {
     setHorizon(portfolio.horizon)
     setNSimulations(portfolio.nSimulations)
     setResult(null)
+    setOptimizerResult(null)
     setError(null)
     setSaveStatus(`Loaded ${portfolio.name}.`)
   }
@@ -359,32 +405,16 @@ export function PortfolioForm() {
     setPortfolioName("")
     setEntries([createBlankEntry()])
     setResult(null)
+    setOptimizerResult(null)
     setError(null)
     setSaveStatus(null)
-  }
-
-  const getErrorMessage = async (response: Response) => {
-    const errorData = await response.json().catch(() => null)
-
-    if (typeof errorData?.detail === "string") {
-      return errorData.detail
-    }
-
-    if (Array.isArray(errorData?.detail)) {
-      return errorData.detail
-        .map(
-          (item: ApiErrorDetail) => item.msg || item.message || "Invalid input",
-        )
-        .join(", ")
-    }
-
-    return `Server error: ${response.status}`
   }
 
   const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault()
     setError(null)
     setResult(null)
+    setOptimizerResult(null)
 
     const holdings = buildHoldingsRequest()
     if (!holdings) {
@@ -394,57 +424,87 @@ export function PortfolioForm() {
       return
     }
 
-    const request: PortfolioRequest = {
-      holdings,
-      horizon,
-      confidence_level: confidenceLevel / 100,
-      n_simulations: nSimulations,
+    if (analysisMode === "optimize" && holdings.length < 2) {
+      setError("Add at least two distinct tickers to run the optimizer.")
+      return
     }
 
     setIsLoading(true)
 
     try {
-      const response = await fetch(`${ENDPOINT}/api/v1/analyze`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(request),
-      })
+      if (analysisMode === "var") {
+        const request: PortfolioRequest = {
+          holdings,
+          horizon,
+          confidence_level: confidenceLevel / 100,
+          n_simulations: nSimulations,
+        }
 
-      if (!response.ok) {
-        throw new Error(await getErrorMessage(response))
+        const response = await fetch(`${ENDPOINT}/api/v1/analyze`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(request),
+        })
+
+        if (!response.ok) {
+          throw new Error(await getErrorMessage(response))
+        }
+
+        const data = await response.json()
+        const portfolioValue = data.portfolio_value ?? 0
+        const varAmount =
+          data.var_positive ??
+          Math.abs(data.var ?? data.var_amount ?? data.VaR ?? 0)
+        const cvarAmount = data.cvar_positive ?? Math.abs(data.cvar ?? 0)
+
+        setResult({
+          var_amount: varAmount,
+          var_percentage:
+            data.var_percentage ??
+            (portfolioValue > 0 ? (varAmount / portfolioValue) * 100 : 0),
+          cvar_amount: cvarAmount,
+          cvar_percentage:
+            data.cvar_percentage ??
+            (portfolioValue > 0 ? (cvarAmount / portfolioValue) * 100 : 0),
+          mean_pnl: data.mean_pnl ?? 0,
+          std_pnl: data.std_pnl ?? 0,
+          best_case: data.best_case ?? 0,
+          worst_case: data.worst_case ?? 0,
+          confidence_level: confidenceLevel,
+          horizon,
+          n_simulations: data.n_simulations ?? nSimulations,
+          portfolio_value: portfolioValue,
+          holdings: data.holdings ?? [],
+        })
+      } else {
+        const response = await fetch(`${ENDPOINT}/api/v1/optimize`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            holdings,
+            n_portfolios: parseInt(nPortfolios, 10),
+            risk_free_rate: DEFAULT_RISK_FREE_RATE,
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error(await getErrorMessage(response))
+        }
+
+        const data = (await response.json()) as OptimizerResult
+        setOptimizerResult(data)
       }
-
-      const data = await response.json()
-      const portfolioValue = data.portfolio_value ?? 0
-      const varAmount =
-        data.var_positive ??
-        Math.abs(data.var ?? data.var_amount ?? data.VaR ?? 0)
-      const cvarAmount = data.cvar_positive ?? Math.abs(data.cvar ?? 0)
-
-      setResult({
-        var_amount: varAmount,
-        var_percentage:
-          data.var_percentage ??
-          (portfolioValue > 0 ? (varAmount / portfolioValue) * 100 : 0),
-        cvar_amount: cvarAmount,
-        cvar_percentage:
-          data.cvar_percentage ??
-          (portfolioValue > 0 ? (cvarAmount / portfolioValue) * 100 : 0),
-        mean_pnl: data.mean_pnl ?? 0,
-        std_pnl: data.std_pnl ?? 0,
-        best_case: data.best_case ?? 0,
-        worst_case: data.worst_case ?? 0,
-        confidence_level: confidenceLevel,
-        horizon,
-        n_simulations: data.n_simulations ?? nSimulations,
-        portfolio_value: portfolioValue,
-        holdings: data.holdings ?? [],
-      })
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to analyze portfolio.",
+        err instanceof Error
+          ? err.message
+          : analysisMode === "var"
+            ? "Failed to analyze portfolio."
+            : "Failed to optimize portfolio.",
       )
     } finally {
       setIsLoading(false)
@@ -552,6 +612,7 @@ export function PortfolioForm() {
                   type="button"
                   variant="outline"
                   onClick={handleNewPortfolio}
+                  className="w-full sm:w-28"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   New
@@ -561,6 +622,7 @@ export function PortfolioForm() {
                   variant="outline"
                   onClick={() => void handleSavePortfolio()}
                   disabled={isSaving}
+                  className="w-full sm:w-28"
                 >
                   {isSaving ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -574,6 +636,7 @@ export function PortfolioForm() {
                   variant="outline"
                   onClick={() => void handleDeletePortfolio()}
                   disabled={!selectedPortfolioId}
+                  className="w-full sm:w-28"
                 >
                   <Trash2 className="h-4 w-4 mr-2" />
                   Delete
@@ -679,71 +742,121 @@ export function PortfolioForm() {
               </div>
             </div>
 
-            {/* VaR Parameters */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="confidence">Confidence Level</Label>
-                <Select
-                  value={confidenceLevel.toString()}
-                  onValueChange={(v) => setConfidenceLevel(parseInt(v))}
-                >
-                  <SelectTrigger id="confidence">
-                    <SelectValue placeholder="Select confidence" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="90">90%</SelectItem>
-                    <SelectItem value="95">95%</SelectItem>
-                    <SelectItem value="99">99%</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="horizon">Time Horizon</Label>
-                <Select
-                  value={horizon.toString()}
-                  onValueChange={(v) => setHorizon(parseInt(v))}
-                >
-                  <SelectTrigger id="horizon">
-                    <SelectValue placeholder="Select horizon" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1 Day</SelectItem>
-                    <SelectItem value="5">5 Days (1 Week)</SelectItem>
-                    <SelectItem value="22">22 Days (1 Month)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="simulations">Monte Carlo Simulations</Label>
-                <Select
-                  value={nSimulations.toString()}
-                  onValueChange={(v) => setNSimulations(parseInt(v))}
-                >
-                  <SelectTrigger id="simulations">
-                    <SelectValue placeholder="Select simulations" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1000">1,000</SelectItem>
-                    <SelectItem value="10000">10,000</SelectItem>
-                    <SelectItem value="50000">50,000</SelectItem>
-                    <SelectItem value="100000">100,000</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-3">
+              <Label>Analysis Mode</Label>
+              <Tabs
+                value={analysisMode}
+                onValueChange={(value) =>
+                  setAnalysisMode(value === "optimize" ? "optimize" : "var")
+                }
+              >
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="var">VaR analysis</TabsTrigger>
+                  <TabsTrigger value="optimize">Efficient frontier</TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
+
+            {analysisMode === "var" ? (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="space-y-2">
+                  <Label htmlFor="confidence">Confidence Level</Label>
+                  <Select
+                    value={confidenceLevel.toString()}
+                    onValueChange={(v) => setConfidenceLevel(parseInt(v))}
+                  >
+                    <SelectTrigger id="confidence" className="w-full">
+                      <SelectValue placeholder="Select confidence" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="90">90%</SelectItem>
+                      <SelectItem value="95">95%</SelectItem>
+                      <SelectItem value="99">99%</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="horizon">Time Horizon</Label>
+                  <Select
+                    value={horizon.toString()}
+                    onValueChange={(v) => setHorizon(parseInt(v))}
+                  >
+                    <SelectTrigger id="horizon" className="w-full">
+                      <SelectValue placeholder="Select horizon" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1 Day</SelectItem>
+                      <SelectItem value="5">5 Days (1 Week)</SelectItem>
+                      <SelectItem value="22">22 Days (1 Month)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="simulations">
+                    Number of Monte Carlo Simulations
+                  </Label>
+                  <Select
+                    value={nSimulations.toString()}
+                    onValueChange={(v) => setNSimulations(parseInt(v))}
+                  >
+                    <SelectTrigger id="simulations" className="w-full">
+                      <SelectValue placeholder="Select simulations" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1000">1,000</SelectItem>
+                      <SelectItem value="10000">10,000</SelectItem>
+                      <SelectItem value="50000">50,000</SelectItem>
+                      <SelectItem value="100000">100,000</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="n-portfolios">Simulated Portfolios</Label>
+                  <Select
+                    value={nPortfolios}
+                    onValueChange={(v) => setNPortfolios(v)}
+                  >
+                    <SelectTrigger id="n-portfolios" className="w-full">
+                      <SelectValue placeholder="Select simulations" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="500">500</SelectItem>
+                      <SelectItem value="1000">1,000</SelectItem>
+                      <SelectItem value="5000">5,000</SelectItem>
+                      <SelectItem value="10000">10,000</SelectItem>
+                      <SelectItem value="50000">50,000</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Optimization needs at least two distinct tickers. The frontend
+                  sends the current weighted holdings to the backend optimizer
+                  and renders the efficient frontier chart when the response
+                  returns.
+                </p>
+              </div>
+            )}
 
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? (
                 <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Analyzing Portfolio...
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {analysisMode === "var"
+                    ? "Analyzing Portfolio..."
+                    : "Optimizing Portfolio..."}
                 </>
               ) : (
                 <>
-                  <TrendingUp className="h-4 w-4 mr-2" />
-                  Calculate VaR
+                  <TrendingUp className="mr-2 h-4 w-4" />
+                  {analysisMode === "var"
+                    ? "Calculate VaR"
+                    : "Run Optimization"}
                 </>
               )}
             </Button>
@@ -763,8 +876,7 @@ export function PortfolioForm() {
         </Card>
       )}
 
-      {/* Results Display */}
-      {result && (
+      {analysisMode === "var" && result && (
         <Card className="border-chart-1">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-chart-1">
@@ -856,6 +968,17 @@ export function PortfolioForm() {
               </div>
             </div>
 
+            {result.holdings.length > 0 && (
+              <MonteCarloSimulationChart
+                holdings={result.holdings.map((holding) => ({
+                  ticker: holding.ticker,
+                  quantity: holding.quantity,
+                }))}
+                apiBaseUrl={ENDPOINT}
+                initialHorizon={result.horizon}
+              />
+            )}
+
             <div className="text-sm text-muted-foreground">
               <p className="font-medium mb-1">Technical Details:</p>
               <ul className="list-disc list-inside space-y-1">
@@ -936,6 +1059,10 @@ export function PortfolioForm() {
             </Accordion>
           </CardContent>
         </Card>
+      )}
+
+      {analysisMode === "optimize" && optimizerResult && (
+        <OptimizerResults result={optimizerResult} />
       )}
     </div>
   )
