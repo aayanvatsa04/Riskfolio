@@ -7,16 +7,23 @@ import pandas as pd
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.engine.monte_carlo_var import fetch_historical_prices, run_var_analysis
+from app.engine.monte_carlo_var import (
+    fetch_historical_prices,
+    run_price_path_analysis,
+    run_var_analysis,
+)
 from app.engine.mpt_optimizer import run_mpt_optimization
 from app.models import (
     HealthResponse,
     HoldingRequest,
-    OptimizeRequest,  # ← new
-    OptimizeResponse,  # ← new
+    MonteCarloPathRequest,
+    MonteCarloPathResponse,
+    OptimizeRequest,
+    OptimizeResponse,
     PortfolioRequest,
     VaRResponse,
 )
+from app.settings import settings
 
 app = FastAPI(
     title="Riskfolio API",
@@ -31,6 +38,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        settings.NEXT_PUBLIC_ORIGIN,
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -182,6 +190,28 @@ async def analyze_portfolio(request: PortfolioRequest) -> dict:
         raise HTTPException(
             status_code=500,
             detail=f"Unable to complete VaR analysis: {exc}",
+        ) from exc
+
+
+@api_v1.post("/monte-carlo-paths", response_model=MonteCarloPathResponse)
+async def monte_carlo_paths(request: MonteCarloPathRequest) -> dict:
+    try:
+        portfolio, portfolio_value, _holdings = _build_weighted_portfolio(
+            request.holdings
+        )
+        return run_price_path_analysis(
+            portfolio=portfolio,
+            portfolio_value=portfolio_value,
+            horizon=request.horizon,
+            n_paths=request.n_paths,
+            volatility_multiplier=request.volatility_multiplier,
+        )
+    except (AssertionError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to complete Monte Carlo path simulation: {exc}",
         ) from exc
 
 

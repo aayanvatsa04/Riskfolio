@@ -29,9 +29,91 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from app.engine.price_cache import (
+    SupabasePriceCache,
+    build_supabase_price_cache_from_env,
+)
+
+_PRICE_CACHE = build_supabase_price_cache_from_env() or SupabasePriceCache()
+
+MIN_CACHE_COMPLETENESS_RATIO = 0.85
+MIN_TRADING_DAYS_BY_PERIOD = {
+    "1d": 1,
+    "5d": 4,
+    "1mo": 18,
+    "3mo": 54,
+    "6mo": 107,
+    "1y": 214,
+    "2y": 428,
+    "5y": 1_071,
+    "10y": 2_142,
+}
+CACHE_FRESHNESS_DAYS = 7
+
 # ─────────────────────────────────────────────
 # SECTION 1: DATA INGESTION
 # ─────────────────────────────────────────────
+
+
+def _price_period_window(
+    period: str,
+) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+    end_date = pd.Timestamp.now(tz="UTC").normalize()
+
+    if period == "max":
+        return None, end_date
+    if period == "ytd":
+        return pd.Timestamp(year=end_date.year, month=1, day=1), end_date
+
+    offsets = {
+        "1d": pd.Timedelta(days=7),
+        "5d": pd.Timedelta(days=14),
+        "1mo": pd.DateOffset(months=1),
+        "3mo": pd.DateOffset(months=3),
+        "6mo": pd.DateOffset(months=6),
+        "1y": pd.DateOffset(years=1),
+        "2y": pd.DateOffset(years=2),
+        "5y": pd.DateOffset(years=5),
+        "10y": pd.DateOffset(years=10),
+    }
+    offset = offsets.get(period)
+    if offset is None:
+        return None, end_date
+    return end_date - offset, end_date
+
+
+def _minimum_cached_trading_days(
+    period: str,
+    start_date: pd.Timestamp | None,
+    end_date: pd.Timestamp | None,
+) -> int | None:
+    if period in MIN_TRADING_DAYS_BY_PERIOD:
+        return MIN_TRADING_DAYS_BY_PERIOD[period]
+    if period == "ytd" and start_date is not None and end_date is not None:
+        business_days = len(pd.bdate_range(start=start_date, end=end_date))
+        return max(1, int(business_days * MIN_CACHE_COMPLETENESS_RATIO))
+    return None
+
+
+def _cache_covers_requested_period(
+    prices: pd.DataFrame,
+    period: str,
+    start_date: pd.Timestamp | None,
+    end_date: pd.Timestamp | None,
+) -> bool:
+    if prices.empty:
+        return False
+
+    minimum_rows = _minimum_cached_trading_days(period, start_date, end_date)
+    if minimum_rows is None or len(prices) < minimum_rows:
+        return False
+
+    if end_date is None:
+        return True
+
+    latest_cached_date = pd.Timestamp(prices.index.max()).date()
+    requested_end_date = pd.Timestamp(end_date).date()
+    return (requested_end_date - latest_cached_date).days <= CACHE_FRESHNESS_DAYS
 
 
 def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFrame:
@@ -49,6 +131,25 @@ def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFr
     """
     print(f"\n📥 Fetching 5-year historical data for: {tickers}...")
 
+    if _PRICE_CACHE:
+        start_date, end_date = _price_period_window(period)
+        try:
+            cached_prices = _PRICE_CACHE.query_prices(tickers, start_date, end_date)
+            if _cache_covers_requested_period(
+                cached_prices, period, start_date, end_date
+            ):
+                print(f"✅ Retrieved {len(cached_prices)} cached trading days.\n")
+                return cached_prices
+            if not cached_prices.empty:
+                print(
+                    "ℹ️ Cached price data is incomplete for "
+                    f"{period} ({len(cached_prices)} trading days); refreshing."
+                )
+        except Exception as exc:
+            print(
+                f"⚠️ Supabase price cache query failed; falling back to yfinance: {exc}"
+            )
+
     raw_data = yf.download(tickers, period=period, auto_adjust=True, progress=False)
 
     if len(tickers) == 1:
@@ -58,6 +159,12 @@ def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFr
         prices = raw_data["Close"]
 
     prices = prices.dropna()
+
+    if _PRICE_CACHE:
+        try:
+            _PRICE_CACHE.upsert_prices(prices, source="yfinance")
+        except Exception as exc:
+            print(f"⚠️ Supabase price cache upsert failed: {exc}")
 
     print(f"✅ Retrieved {len(prices)} trading days of data.\n")
     return prices
@@ -212,6 +319,51 @@ def run_monte_carlo(
     portfolio_pnl = portfolio_value * portfolio_returns
 
     return portfolio_pnl
+
+
+def run_monte_carlo_price_paths(
+    mu: np.ndarray,
+    cov_matrix: np.ndarray,
+    weights: np.ndarray,
+    portfolio_value: float,
+    horizon: int,
+    n_paths: int = 100,
+    volatility_multiplier: float = 1.0,
+) -> np.ndarray:
+    """
+    Simulate full portfolio value paths over time for charting.
+
+    Unlike run_monte_carlo(), which returns only the terminal P&L distribution
+    used for VaR, this returns the portfolio value at day 0 and every simulated
+    trading day through the selected horizon.
+
+    Returns:
+        Array of shape (horizon + 1, n_paths), where row 0 is the current
+        portfolio value and each column is one simulated path.
+    """
+    if horizon < 1:
+        raise ValueError("Horizon must be at least 1 trading day")
+    if n_paths < 1:
+        raise ValueError("Number of paths must be positive")
+    if not np.isfinite(volatility_multiplier) or volatility_multiplier <= 0:
+        raise ValueError("Volatility multiplier must be positive")
+
+    n_assets = len(mu)
+    L = cholesky_decomposition(cov_matrix)
+
+    z = np.random.standard_normal((horizon, n_assets, n_paths))
+    correlated_shocks = np.einsum("ij,tjn->tin", L, z)
+    daily_log_returns = (
+        mu[np.newaxis, :, np.newaxis] + correlated_shocks * volatility_multiplier
+    )
+
+    cumulative_log_returns = np.cumsum(daily_log_returns, axis=0)
+    asset_growth = np.exp(cumulative_log_returns)
+    portfolio_growth = np.tensordot(weights, asset_growth, axes=(0, 1))
+    simulated_values = portfolio_value * portfolio_growth
+
+    initial_values = np.full((1, n_paths), portfolio_value)
+    return np.vstack([initial_values, simulated_values])
 
 
 # ─────────────────────────────────────────────
@@ -453,6 +605,95 @@ def run_var_analysis(
         print("-" * 60 + "\n")
 
     return results
+
+
+def run_price_path_analysis(
+    portfolio: dict,
+    portfolio_value: float,
+    horizon: int = 22,
+    n_paths: int = 100,
+    volatility_multiplier: float = 1.0,
+) -> dict:
+    """
+    End-to-end Monte Carlo price-path simulation for frontend visualization.
+
+    Uses the same historical data, log-return statistics, covariance matrix,
+    Cholesky correlation handling, and current portfolio-value definition as
+    run_var_analysis(), but returns values through time instead of terminal VaR.
+    """
+    tickers = list(portfolio.keys())
+    weights = np.array(list(portfolio.values()))
+
+    assert abs(weights.sum() - 1.0) < 1e-6, "Portfolio weights must sum to 1.0"
+
+    total_start = time.perf_counter()
+
+    t0 = time.perf_counter()
+    prices = fetch_historical_prices(tickers)
+    t_fetch = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    log_returns = compute_log_returns(prices)
+    t_returns = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    mu, sigma = compute_statistics(log_returns)
+    t_stats = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    path_values = run_monte_carlo_price_paths(
+        mu=mu,
+        cov_matrix=sigma,
+        weights=weights,
+        portfolio_value=portfolio_value,
+        horizon=horizon,
+        n_paths=n_paths,
+        volatility_multiplier=volatility_multiplier,
+    )
+    t_simulation = time.perf_counter() - t0
+
+    total_elapsed = time.perf_counter() - total_start
+
+    summary = []
+    for day, values in enumerate(path_values):
+        summary.append(
+            {
+                "day": day,
+                "mean": float(np.mean(values)),
+                "p05": float(np.percentile(values, 5)),
+                "p50": float(np.percentile(values, 50)),
+                "p95": float(np.percentile(values, 95)),
+            }
+        )
+
+    paths = []
+    for path_index in range(path_values.shape[1]):
+        paths.append(
+            {
+                "path_id": path_index + 1,
+                "points": [
+                    {"day": day, "value": float(value)}
+                    for day, value in enumerate(path_values[:, path_index])
+                ],
+            }
+        )
+
+    return {
+        "horizon": horizon,
+        "n_paths": n_paths,
+        "volatility_multiplier": volatility_multiplier,
+        "portfolio_value": portfolio_value,
+        "portfolio_weights": portfolio,
+        "summary": summary,
+        "paths": paths,
+        "timing": {
+            "data_fetch_s": round(t_fetch, 4),
+            "log_returns_s": round(t_returns, 4),
+            "statistics_s": round(t_stats, 4),
+            "monte_carlo_s": round(t_simulation, 4),
+            "total_s": round(total_elapsed, 4),
+        },
+    }
 
 
 # ─────────────────────────────────────────────

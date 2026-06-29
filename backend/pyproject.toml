@@ -9,6 +9,7 @@ dependencies = [
     "numpy>=2.4.6",
     "pandas>=3.0.3",
     "scipy>=1.17.1",
+    "supabase>=2.31.0",
     "yfinance>=1.4.1",
 ]
 
@@ -27,9 +28,11 @@ extend-select = [
     "SIM",  # simplify code
     "C4",   # better comprehensions
     "FA",   # future annotations
-    "RUF",  # Ruff-specific rules
 ]
-ignore = ["RUF002", "RUF003"]
+
+exclude = [
+    "app/db_types.py"
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

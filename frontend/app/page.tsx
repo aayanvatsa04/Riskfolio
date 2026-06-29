@@ -14,9 +14,9 @@ export default function Page() {
             <h1 className="text-4xl font-bold tracking-tight">Riskfolio</h1>
           </div>
           <p className="text-muted-foreground text-lg max-w-2xl mx-auto text-balance">
-            Monte Carlo Value at Risk (VaR) analysis for your investment
-            portfolio. Understand your potential downside risk with statistical
-            confidence.
+            Portfolio risk analysis and efficient frontier optimization for your
+            investment portfolio. Compare downside risk against risk-return
+            trade-offs with the same holdings.
           </p>
         </div>
 
@@ -26,8 +26,9 @@ export default function Page() {
         {/* Footer Info */}
         <div className="mt-8 text-center text-sm text-muted-foreground">
           <p>
-            VaR is calculated using Monte Carlo simulation with historical
-            return distributions.
+            VaR is calculated using Monte Carlo simulation. Frontier
+            optimization uses historical prices to simulate random weighted
+            portfolios.
           </p>
         </div>
       </div>

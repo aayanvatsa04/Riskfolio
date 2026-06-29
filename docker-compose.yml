@@ -5,6 +5,9 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       PYTHONUNBUFFERED: "1"
+      NEXT_PUBLIC_ORIGIN: ${NEXT_PUBLIC_ORIGIN:-http://localhost:8000}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_KEY: ${SUPABASE_KEY:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -27,7 +30,8 @@ services:
       context: ./frontend
     command: pnpm exec next dev --hostname 0.0.0.0 --port 3000
     environment:
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+      NEXT_PUBLIC_ORIGIN: ${NEXT_PUBLIC_ORIGIN:-http://localhost:8000}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
       WATCHPACK_POLLING: "true"
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
