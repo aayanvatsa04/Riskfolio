@@ -84,12 +84,26 @@ def test_supabase_price_cache_ignores_anon_key(monkeypatch):
 
 
 def test_fetch_historical_prices_uses_supabase_cache(monkeypatch):
+    # IMPORTANT: these dates are generated relative to "now" at the moment
+    # the test runs, rather than hardcoded to a fixed calendar date.
+    #
+    # WHY THIS MATTERS: fetch_historical_prices() only treats cached data as
+    # "fresh enough to skip yfinance" if the most recent cached trading day
+    # is within CACHE_FRESHNESS_DAYS (7 days) of today — see
+    # _cache_covers_requested_period() in monte_carlo_var.py. A fixed
+    # calendar date (e.g. "2026-06-26") only satisfies that 7-day window
+    # for a short time after it's written — once more than 7 real days
+    # pass, this test would start failing even though nothing in the
+    # actual caching logic changed, purely because the hardcoded date
+    # aged out. Anchoring to pd.Timestamp.now() means this test remains
+    # correct no matter when it's actually run.
+    recent_business_days = pd.bdate_range(end=pd.Timestamp.now().normalize(), periods=4)
     cached_prices = pd.DataFrame(
         {
             "AAPL": [188.0, 189.25, 190.5, 191.25],
             "TSLA": [247.5, 249.0, 250.0, 252.75],
         },
-        index=pd.to_datetime(["2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26"]),
+        index=recent_business_days,
     )
 
     class FakeCache:

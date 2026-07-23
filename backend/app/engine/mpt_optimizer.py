@@ -44,6 +44,7 @@ from __future__ import annotations
 import time
 
 import numpy as np
+from scipy.optimize import minimize
 
 # Import the data pipeline functions from the VaR engine.
 # We deliberately reuse these rather than rewriting them — if the data
@@ -288,6 +289,184 @@ def simulate_random_portfolios(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SECTION 2b: ANALYTICAL EFFICIENT FRONTIER (EXACT, VIA SCIPY.OPTIMIZE)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def compute_analytical_frontier(
+    annual_mu: np.ndarray,
+    annual_sigma: np.ndarray,
+    risk_free_rate: float,
+    n_points: int = 50,
+) -> list[dict]:
+    """
+    Compute the EXACT Efficient Frontier by solving a constrained quadratic
+    optimization problem at a sweep of target returns, using
+    scipy.optimize.minimize (method="SLSQP").
+
+    WHY THIS EXISTS ALONGSIDE simulate_random_portfolios():
+        simulate_random_portfolios() APPROXIMATES the frontier by randomly
+        sampling thousands of weight combinations and keeping the best ones.
+        It is simple, fast, and easy to reason about — but it is still an
+        approximation: with n_portfolios=5,000, the highest-Sharpe sample
+        found is typically within 1-2% of the true optimum (see the module
+        docstring and section 12.5 of the project README).
+
+        This function instead computes the MATHEMATICALLY EXACT frontier.
+        For each target return, it asks: "of all portfolios that achieve
+        AT LEAST this expected return, which one has the lowest possible
+        variance?" That is a textbook constrained optimization problem,
+        and SLSQP (Sequential Least Squares Programming) solves it exactly
+        (up to numerical solver tolerance) rather than by random search.
+
+        We deliberately compute and return BOTH curves (this one, and the
+        Monte Carlo cloud from simulate_random_portfolios()) so the two can
+        be plotted on the same chart. If the Monte Carlo cloud's upper-left
+        edge hugs this exact curve closely, that is a direct, visual proof
+        that the sampling approach is correct — turning the "within 1-2%"
+        claim in the README into something a viewer can actually see,
+        rather than just take on faith.
+
+    THE OPTIMIZATION PROBLEM, FOR EACH TARGET RETURN r:
+
+        minimize     wᵀ Σ w                    (portfolio variance)
+        subject to   Σᵢ wᵢ  = 1                 (fully invested — no cash left over)
+                     w · μ   = r                (hit the exact target return)
+                     wᵢ ≥ 0  for all i           (long-only — no short positions,
+                                                  consistent with every other
+                                                  engine in this codebase)
+
+        Tracing this out for many values of r (from the lowest-return asset
+        to the highest-return asset) gives the full Efficient Frontier curve:
+        for every level of return, the minimum possible risk to achieve it.
+
+    HOW SLSQP FITS IN:
+        SLSQP handles exactly this shape of problem — a smooth (quadratic)
+        objective with linear equality constraints and simple bounds. We
+        re-solve it once per target return (n_points times), each solve
+        taking a small fraction of a millisecond for a handful of assets.
+        This is why the sweep is fast even though it looks like "50 separate
+        optimization problems" — each one is tiny.
+
+    Args:
+        annual_mu:       Annualised mean return vector.    Shape: (n_assets,)
+        annual_sigma:    Annualised covariance matrix.      Shape: (n_assets, n_assets)
+        risk_free_rate:  Annualised risk-free rate, used to compute the
+                         Sharpe ratio at each point on the curve (same
+                         formula as compute_portfolio_stats()).
+        n_points:        Number of target returns to sweep between the
+                         lowest and highest individual-asset annual return.
+                         Default 50 — enough for a visually smooth curve
+                         without solving hundreds of optimization problems.
+
+    Returns:
+        List of up to n_points dicts (fewer if some target returns are
+        infeasible — see note below), each shaped identically to a Monte
+        Carlo frontier point so the frontend can plot both series through
+        the same chart component:
+            "expected_return" — float, annualised expected return
+            "volatility"      — float, annualised volatility (the MINIMUM
+                                 possible volatility for this return level —
+                                 this is what makes it "the frontier")
+            "sharpe"          — float, Sharpe ratio at this point
+
+    NOTE ON INFEASIBLE TARGETS:
+        Every target return between the min and max individual-asset return
+        is feasible for a long-only portfolio (you can always allocate more
+        to the higher-return asset to reach it). In rare numerical edge
+        cases SLSQP may fail to converge for a specific target (e.g. a
+        target extremely close to a single-asset corner solution) — such
+        points are silently skipped rather than raising, since one missing
+        point out of 50 does not meaningfully affect the shape of the curve.
+    """
+    n_assets = len(annual_mu)
+
+    # ── Determine the sweep range ────────────────────────────────────────
+    # The lowest achievable return for a long-only portfolio is simply
+    # holding 100% of whichever single asset has the lowest expected return
+    # (you cannot go below that — there's no shorting). Symmetrically, the
+    # highest achievable return is 100% in the highest-return asset.
+    # Sweeping between these two bounds covers the entire feasible frontier.
+    min_target = float(np.min(annual_mu))
+    max_target = float(np.max(annual_mu))
+    target_returns = np.linspace(min_target, max_target, n_points)
+
+    # ── Shared optimizer setup ───────────────────────────────────────────
+    # Bounds: every weight must be between 0 and 1 (long-only, no leverage).
+    # This list is the same for every solve, so it is built once outside
+    # the loop.
+    bounds = [(0.0, 1.0) for _ in range(n_assets)]
+
+    # Equal-weighted starting guess for every solve. SLSQP is a local
+    # optimizer, but this problem is convex (quadratic objective, linear
+    # constraints), so it reliably finds the global optimum regardless of
+    # starting point — the equal-weight guess is just a simple, neutral
+    # choice used for every target return in the sweep.
+    initial_weights = np.full(n_assets, 1.0 / n_assets)
+
+    def _portfolio_variance(weights: np.ndarray) -> float:
+        """Objective function: wᵀ Σ w — the quantity SLSQP minimizes."""
+        return float(weights @ annual_sigma @ weights)
+
+    frontier_curve: list[dict] = []
+
+    for target in target_returns:
+        # Two equality constraints for this specific solve:
+        #   1) weights must sum to 1 (fully invested)
+        #   2) weighted return must exactly equal this sweep's target
+        # `target=target` in the lambda default binds the CURRENT loop
+        # value at definition time — without it, every constraint closure
+        # would incorrectly reference the final value of `target` after
+        # the loop finishes (a classic Python late-binding closure bug).
+        constraints = [
+            {"type": "eq", "fun": lambda w: np.sum(w) - 1.0},
+            {
+                "type": "eq",
+                "fun": lambda w, target=target: float(w @ annual_mu) - target,
+            },
+        ]
+
+        result = minimize(
+            _portfolio_variance,
+            initial_weights,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints,
+            options={"maxiter": 200, "ftol": 1e-12},
+        )
+
+        # Skip target returns where the solver failed to converge (see
+        # docstring note above) rather than raising — a smooth 49-point
+        # curve is preferable to crashing the whole optimization endpoint
+        # over a single numerically awkward target.
+        if not result.success:
+            continue
+
+        w_opt = result.x
+        variance = float(w_opt @ annual_sigma @ w_opt)
+        volatility = float(np.sqrt(max(variance, 0.0)))
+        expected_return = float(w_opt @ annual_mu)
+
+        # Same Sharpe formula as compute_portfolio_stats() and
+        # simulate_random_portfolios() — guarded against division by zero.
+        sharpe = (
+            (expected_return - risk_free_rate) / volatility
+            if volatility > 1e-10
+            else 0.0
+        )
+
+        frontier_curve.append(
+            {
+                "expected_return": expected_return,
+                "volatility": volatility,
+                "sharpe": sharpe,
+            }
+        )
+
+    return frontier_curve
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3: SINGLE-PORTFOLIO STATISTICS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -386,6 +565,10 @@ def run_mpt_optimization(
         Step 4:     Annualise the daily parameters (×252)
         Step 5:     Simulate 5,000 random portfolios and compute
                     return, volatility, Sharpe for each (vectorized)
+        Step 5b:    Compute the EXACT analytical frontier via
+                    scipy.optimize (SLSQP) — see
+                    compute_analytical_frontier() for full detail.
+                    Runs alongside, not instead of, Step 5.
         Step 6:     Find the Max Sharpe and Min Vol portfolios
                     (argmax / argmin over the Sharpe / vol arrays)
         Step 7:     Compute stats for the user's current weights
@@ -428,7 +611,13 @@ def run_mpt_optimization(
             "tickers"              — list of ticker symbols
             "frontier_points"      — list of up to 1,000 dicts, each with
                                      expected_return, volatility, sharpe
-                                     (the scatter cloud for the chart)
+                                     (the Monte Carlo scatter cloud)
+            "analytical_frontier_curve" — list of up to 50 dicts, same shape
+                                     as frontier_points, tracing the EXACT
+                                     frontier via scipy.optimize (SLSQP).
+                                     Plot alongside frontier_points to
+                                     visually verify the Monte Carlo cloud
+                                     hugs the true frontier.
             "max_sharpe_portfolio" — dict with expected_return, volatility,
                                      sharpe, weights (the optimal portfolio)
             "min_vol_portfolio"    — dict with the same fields (least risky)
@@ -492,6 +681,17 @@ def run_mpt_optimization(
     returns_arr = sim["returns"]
     vols_arr = sim["volatilities"]
     sharpes_arr = sim["sharpes"]
+
+    # ── Step 5b: Compute the EXACT analytical frontier (scipy.optimize) ─────
+    # This runs alongside (not instead of) the Monte Carlo cloud above, so
+    # the frontend can plot both series and visually verify that the
+    # sampled cloud's edge tracks the true frontier curve. See the
+    # compute_analytical_frontier() docstring for full mathematical detail.
+    t0 = time.perf_counter()
+    analytical_frontier_curve = compute_analytical_frontier(
+        annual_mu, annual_sigma, risk_free_rate
+    )
+    t_analytical = time.perf_counter() - t0
 
     # ── Step 6: Identify optimal portfolios ─────────────────────────────────
 
@@ -570,6 +770,7 @@ def run_mpt_optimization(
         "log_returns_s": round(t_returns, 4),
         "statistics_s": round(t_stats, 4),
         "optimization_s": round(t_opt, 4),  # time for the 5,000-portfolio simulation
+        "analytical_frontier_s": round(t_analytical, 4),  # time for the SLSQP sweep
         "total_s": round(total_elapsed, 4),
     }
 
@@ -645,6 +846,7 @@ def run_mpt_optimization(
     return {
         "tickers": tickers,
         "frontier_points": frontier_points,
+        "analytical_frontier_curve": analytical_frontier_curve,
         "max_sharpe_portfolio": max_sharpe_portfolio,
         "min_vol_portfolio": min_vol_portfolio,
         "current_portfolio": current_portfolio,

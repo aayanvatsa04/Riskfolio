@@ -57,6 +57,10 @@ class OptimizeTimingBreakdown(BaseModel):
     log_returns_s: float
     statistics_s: float
     optimization_s: float
+    # Time spent solving the scipy.optimize (SLSQP) sweep that produces the
+    # exact analytical frontier curve, separate from optimization_s (which
+    # times the Monte Carlo weight-sampling cloud only).
+    analytical_frontier_s: float
     total_s: float
 
 
@@ -64,7 +68,15 @@ class OptimizeResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     tickers: list[str]
+    # The Monte Carlo cloud: up to 1,000 randomly-sampled feasible portfolios.
     frontier_points: list[FrontierPoint]
+    # The EXACT Efficient Frontier: up to 50 points tracing the true
+    # minimum-variance boundary, computed via scipy.optimize (SLSQP) in
+    # compute_analytical_frontier(). Same shape as frontier_points so the
+    # frontend can render both as series on the same chart — the Monte
+    # Carlo cloud's upper-left edge should visually hug this curve, which
+    # doubles as a live correctness check on the sampling approach.
+    analytical_frontier_curve: list[FrontierPoint]
     max_sharpe_portfolio: PortfolioPoint
     min_vol_portfolio: PortfolioPoint
     current_portfolio: PortfolioPoint
