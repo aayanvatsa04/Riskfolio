@@ -273,6 +273,169 @@ def test_monte_carlo_paths_calls_engine_with_slider_payload(monkeypatch):
     ]
 
 
+def test_stress_test_calls_engine_with_validated_payload(monkeypatch):
+    fetch_calls = []
+    engine_calls = []
+
+    def fake_fetch_historical_prices(
+        tickers: list[str], period: str = "5y"
+    ) -> pd.DataFrame:
+        fetch_calls.append({"tickers": tickers, "period": period})
+        return pd.DataFrame(
+            {"AAPL": [100.0], "MSFT": [200.0]},
+            index=pd.to_datetime(["2026-05-29"]),
+        )
+
+    def fake_run_stress_test_analysis(**kwargs):
+        engine_calls.append(kwargs)
+        return {
+            "tickers": ["AAPL", "MSFT"],
+            "baseline": {
+                "var": -523.12,
+                "var_positive": 523.12,
+                "cvar": -701.45,
+                "cvar_positive": 701.45,
+                "mean_pnl": 42.3,
+                "std_pnl": 380.12,
+                "worst_case": -3201.22,
+                "best_case": 2103.55,
+                "confidence_level": 0.95,
+                "n_simulations": 10_000,
+                "portfolio_value": kwargs["portfolio_value"],
+                "portfolio_weights": kwargs["portfolio"],
+            },
+            "shocked": {
+                "var": -680.0,
+                "var_positive": 680.0,
+                "cvar": -890.0,
+                "cvar_positive": 890.0,
+                "mean_pnl": 30.0,
+                "std_pnl": 410.0,
+                "worst_case": -3500.0,
+                "best_case": 2200.0,
+                "confidence_level": 0.95,
+                "n_simulations": 10_000,
+                "portfolio_value": 8500.0,
+                "portfolio_weights": {"AAPL": 0.4, "MSFT": 0.6},
+            },
+            "shocks_applied": {
+                "price_shocks": kwargs["price_shocks"],
+                "volatility_multiplier": kwargs["volatility_multiplier"],
+            },
+            "timing": {
+                "data_fetch_s": 0.01,
+                "log_returns_s": 0.001,
+                "statistics_s": 0.001,
+                "baseline_simulation_s": 0.01,
+                "shocked_simulation_s": 0.01,
+                "total_s": 0.032,
+            },
+        }
+
+    monkeypatch.setattr(
+        "app.main.fetch_historical_prices", fake_fetch_historical_prices
+    )
+    monkeypatch.setattr(
+        "app.main.run_stress_test_analysis", fake_run_stress_test_analysis
+    )
+
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/api/v1/stress-test",
+            json={
+                "holdings": [
+                    {"ticker": "aapl", "quantity": 10},
+                    {"ticker": "MSFT", "quantity": 5},
+                ],
+                "price_shocks": {"AAPL": -0.15},
+                "volatility_multiplier": 1.5,
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["baseline"]["portfolio_value"] == 2000.0
+    assert body["shocked"]["portfolio_value"] == 8500.0
+    assert body["shocks_applied"]["price_shocks"] == {"AAPL": -0.15}
+    assert body["shocks_applied"]["volatility_multiplier"] == 1.5
+    assert fetch_calls == [{"tickers": ["AAPL", "MSFT"], "period": "5d"}]
+    assert engine_calls == [
+        {
+            "portfolio": {"AAPL": 0.5, "MSFT": 0.5},
+            "portfolio_value": 2000.0,
+            "price_shocks": {"AAPL": -0.15},
+            "volatility_multiplier": 1.5,
+            "horizon": 1,
+            "confidence_level": 0.95,
+            "n_simulations": 10_000,
+            "verbose": False,
+        }
+    ]
+
+
+def test_stress_test_rejects_price_shock_at_negative_one():
+    """A price shock of exactly -1.0 (100% loss) must be rejected at the
+    API layer before ever reaching the engine."""
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/api/v1/stress-test",
+            json={
+                "holdings": [{"ticker": "AAPL", "quantity": 10}],
+                "price_shocks": {"AAPL": -1.0},
+            },
+        )
+    )
+
+    assert response.status_code == 422
+
+
+def test_stress_test_rejects_non_positive_volatility_multiplier():
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/api/v1/stress-test",
+            json={
+                "holdings": [{"ticker": "AAPL", "quantity": 10}],
+                "volatility_multiplier": 0,
+            },
+        )
+    )
+
+    assert response.status_code == 422
+
+
+def test_stress_test_reports_engine_failures(monkeypatch):
+    def fake_fetch_historical_prices(_tickers, period="5y"):
+        return pd.DataFrame(
+            {"AAPL": [100.0]},
+            index=pd.to_datetime(["2026-05-29"]),
+        )
+
+    def fake_run_stress_test_analysis(**_kwargs):
+        raise RuntimeError("market data unavailable")
+
+    monkeypatch.setattr(
+        "app.main.fetch_historical_prices", fake_fetch_historical_prices
+    )
+    monkeypatch.setattr(
+        "app.main.run_stress_test_analysis", fake_run_stress_test_analysis
+    )
+
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/api/v1/stress-test",
+            json={"holdings": [{"ticker": "AAPL", "quantity": 10}]},
+        )
+    )
+
+    assert response.status_code == 500
+    assert "market data unavailable" in response.json()["detail"]
+
+
 def test_unversioned_analyze_route_is_not_registered():
     response = asyncio.run(
         _request(
