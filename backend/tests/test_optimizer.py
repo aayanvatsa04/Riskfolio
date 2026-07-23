@@ -3,6 +3,7 @@ import pytest
 
 from app.engine.mpt_optimizer import (
     annualise_parameters,
+    compute_analytical_frontier,
     compute_portfolio_stats,
     run_mpt_optimization,
     simulate_random_portfolios,
@@ -255,6 +256,161 @@ class TestComputePortfolioStats:
         assert result["volatility"] >= 0
 
 
+# ─── Class 3b: compute_analytical_frontier ───────────────────────────────────
+
+
+class TestComputeAnalyticalFrontier:
+    """
+    Tests for compute_analytical_frontier() — the exact Efficient Frontier
+    computed via scipy.optimize (SLSQP), as opposed to the Monte Carlo
+    approximation in simulate_random_portfolios().
+
+    Mathematical invariants verified:
+        - Every curve point has the required keys
+        - Volatility is never negative
+        - Expected returns stay within the achievable range (between the
+          lowest- and highest-return individual assets)
+        - No Monte Carlo sample ever beats (has lower volatility than) the
+          analytical frontier at a comparable return level — this is the
+          core cross-check that proves the two methods agree
+        - The analytical curve's global minimum-variance point matches
+          (approximately) the Monte Carlo cloud's min_vol portfolio
+        - The function respects the requested n_points count
+    """
+
+    def test_curve_points_have_required_keys(self, three_asset_params):
+        """Every returned point must have expected_return, volatility, sharpe."""
+        mu, sigma = three_asset_params
+        annual_mu, annual_sigma = annualise_parameters(mu, sigma)
+        curve = compute_analytical_frontier(annual_mu, annual_sigma, 0.05, n_points=20)
+        assert len(curve) > 0
+        for point in curve:
+            assert "expected_return" in point
+            assert "volatility" in point
+            assert "sharpe" in point
+
+    def test_volatilities_non_negative(self, three_asset_params):
+        """Volatility must never be negative for any point on the curve."""
+        mu, sigma = three_asset_params
+        annual_mu, annual_sigma = annualise_parameters(mu, sigma)
+        curve = compute_analytical_frontier(annual_mu, annual_sigma, 0.05, n_points=20)
+        assert all(point["volatility"] >= 0 for point in curve)
+
+    def test_returns_within_achievable_range(self, three_asset_params):
+        """
+        Every curve point's expected_return must fall within
+        [min(annual_mu), max(annual_mu)] (with a small floating-point
+        tolerance) — a long-only portfolio can never return less than its
+        worst asset or more than its best asset.
+        """
+        mu, sigma = three_asset_params
+        annual_mu, annual_sigma = annualise_parameters(mu, sigma)
+        curve = compute_analytical_frontier(annual_mu, annual_sigma, 0.05, n_points=20)
+        lower_bound = float(np.min(annual_mu)) - 1e-6
+        upper_bound = float(np.max(annual_mu)) + 1e-6
+        for point in curve:
+            assert lower_bound <= point["expected_return"] <= upper_bound
+
+    def test_respects_requested_n_points(self, three_asset_params):
+        """
+        The curve should contain up to n_points entries. It may return
+        fewer if SLSQP fails to converge for a specific target (documented
+        behaviour), but for a well-conditioned 3-asset example it should
+        converge for every target, so the count should match exactly.
+        """
+        mu, sigma = three_asset_params
+        annual_mu, annual_sigma = annualise_parameters(mu, sigma)
+        curve = compute_analytical_frontier(annual_mu, annual_sigma, 0.05, n_points=30)
+        assert len(curve) == 30
+
+    def test_sharpe_formula_holds(self, three_asset_params):
+        """Every curve point's Sharpe must equal (return - rf) / volatility."""
+        mu, sigma = three_asset_params
+        annual_mu, annual_sigma = annualise_parameters(mu, sigma)
+        rf = 0.05
+        curve = compute_analytical_frontier(annual_mu, annual_sigma, rf, n_points=20)
+        for point in curve:
+            expected_sharpe = (point["expected_return"] - rf) / point["volatility"]
+            assert abs(point["sharpe"] - expected_sharpe) < 1e-8
+
+    def test_no_monte_carlo_point_beats_the_frontier(self, three_asset_params):
+        """
+        CORE CORRECTNESS CHECK: no randomly-sampled Monte Carlo portfolio
+        should ever have LOWER volatility than the exact analytical
+        frontier at the same expected return — the analytical frontier is,
+        by definition, the minimum-variance boundary. If a Monte Carlo
+        sample beat it, that would mean either the analytical solver is
+        wrong, or the two methods disagree on the underlying math.
+
+        We use a dense 200-point analytical curve and linear interpolation
+        to estimate the frontier's volatility at each Monte Carlo sample's
+        exact return, since the Monte Carlo returns won't land exactly on
+        one of the analytical sweep's target points.
+        """
+        mu, sigma = three_asset_params
+        annual_mu, annual_sigma = annualise_parameters(mu, sigma)
+        rf = 0.05
+
+        curve = compute_analytical_frontier(annual_mu, annual_sigma, rf, n_points=200)
+        curve_returns = np.array([p["expected_return"] for p in curve])
+        curve_vols = np.array([p["volatility"] for p in curve])
+        # np.interp requires the x-values (curve_returns) to be sorted
+        # ascending -- sort both arrays together to guarantee this.
+        order = np.argsort(curve_returns)
+        curve_returns, curve_vols = curve_returns[order], curve_vols[order]
+
+        mc = simulate_random_portfolios(annual_mu, annual_sigma, 3, 10_000, rf)
+
+        for mc_return, mc_vol in zip(mc["returns"], mc["volatilities"], strict=True):
+            # Skip any Monte Carlo sample outside the analytical sweep's
+            # return range -- it has no comparable frontier point.
+            if mc_return < curve_returns[0] or mc_return > curve_returns[-1]:
+                continue
+            frontier_vol_at_return = np.interp(mc_return, curve_returns, curve_vols)
+            # Allow a small numerical tolerance for interpolation error
+            # between the discrete 200-point curve and the true continuous
+            # frontier -- anything beyond that tolerance is a real violation.
+            assert mc_vol >= frontier_vol_at_return - 1e-4
+
+    def test_matches_min_vol_from_monte_carlo(self, three_asset_params):
+        """
+        The analytical curve's global minimum-variance point should
+        approximately match the Min Vol portfolio found by the Monte Carlo
+        cloud (simulate_random_portfolios + argmin). They are found by two
+        completely different methods (exact optimization vs. random
+        search), so this is a strong cross-validation of both.
+
+        TOLERANCE NOTE: compute_analytical_frontier() evaluates the curve
+        at a FINITE number of discrete target returns (n_points), so its
+        reported minimum is a discrete approximation of the true
+        continuous minimum -- the true minimum generally sits BETWEEN two
+        grid points, not exactly on one. Measured empirically: at
+        n_points=200, this grid's minimum overestimates the true
+        continuous minimum by roughly 1-2e-6 for a typical 3-asset
+        portfolio. A Monte Carlo sample can therefore land marginally
+        BELOW the grid's reported minimum purely due to this grid
+        resolution effect -- not because it beat the true frontier. 1e-4
+        is used here (two orders of magnitude looser than the measured
+        ~1.6e-6 gap) so the test reliably passes across random Monte Carlo
+        draws while still being a meaningfully tight correctness check.
+        """
+        mu, sigma = three_asset_params
+        annual_mu, annual_sigma = annualise_parameters(mu, sigma)
+        rf = 0.05
+
+        curve = compute_analytical_frontier(annual_mu, annual_sigma, rf, n_points=200)
+        analytical_min_vol = min(point["volatility"] for point in curve)
+
+        mc = simulate_random_portfolios(annual_mu, annual_sigma, 3, 20_000, rf)
+        mc_min_vol = float(np.min(mc["volatilities"]))
+
+        # The Monte Carlo minimum should be very close to the true
+        # analytical minimum. See the TOLERANCE NOTE above for why 1e-4
+        # (not something tighter like 1e-6) is the correct bound here.
+        assert mc_min_vol >= analytical_min_vol - 1e-4
+        assert abs(mc_min_vol - analytical_min_vol) / analytical_min_vol < 0.01
+
+
 # ─── Class 4: run_mpt_optimization (integration) ─────────────────────────────
 
 
@@ -293,12 +449,27 @@ class TestRunMptOptimization:
         result = optimization_result
         assert "tickers" in result
         assert "frontier_points" in result
+        assert "analytical_frontier_curve" in result
         assert "max_sharpe_portfolio" in result
         assert "min_vol_portfolio" in result
         assert "current_portfolio" in result
         assert "risk_free_rate" in result
         assert "n_portfolios" in result
         assert "timing" in result
+
+    def test_analytical_frontier_curve_has_required_keys(self, optimization_result):
+        """Every analytical_frontier_curve point must have the same shape
+        as a Monte Carlo frontier point, so the frontend can render both
+        series through the same chart component."""
+        for point in optimization_result["analytical_frontier_curve"]:
+            assert "expected_return" in point
+            assert "volatility" in point
+            assert "sharpe" in point
+
+    def test_analytical_frontier_curve_is_non_empty(self, optimization_result):
+        """The analytical sweep must produce at least some points for a
+        well-conditioned 2-asset portfolio (AAPL/MSFT)."""
+        assert len(optimization_result["analytical_frontier_curve"]) > 0
 
     def test_max_sharpe_has_highest_sharpe_in_frontier(self, optimization_result):
         """
@@ -363,4 +534,5 @@ class TestRunMptOptimization:
         assert "log_returns_s" in timing
         assert "statistics_s" in timing
         assert "optimization_s" in timing
+        assert "analytical_frontier_s" in timing
         assert "total_s" in timing
