@@ -13,6 +13,13 @@ from app.models.optimizer import (
     OptimizeTimingBreakdown,
     PortfolioPoint,
 )
+from app.models.stress import (
+    ShocksApplied,
+    StressScenarioResult,
+    StressTestRequest,
+    StressTestResponse,
+    StressTestTimingBreakdown,
+)
 from app.models.var import PortfolioRequest, TimingBreakdown, VaRResponse
 
 __all__ = [
@@ -30,6 +37,11 @@ __all__ = [
     "OptimizeTimingBreakdown",
     "PortfolioPoint",
     "PortfolioRequest",
+    "ShocksApplied",
+    "StressScenarioResult",
+    "StressTestRequest",
+    "StressTestResponse",
+    "StressTestTimingBreakdown",
     "TimingBreakdown",
     "VaRResponse",
 ]
