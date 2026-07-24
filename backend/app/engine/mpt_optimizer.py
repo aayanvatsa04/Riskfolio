@@ -541,6 +541,125 @@ def compute_portfolio_stats(
     }
 
 
+def compute_share_targets(
+    weights: dict[str, float],
+    holdings: list[dict],
+) -> dict:
+    """
+    Translate a target WEIGHT vector (e.g. "AAPL 65%, MSFT 35%") into an
+    actual, actionable number of shares to hold for each ticker -- and how
+    many to buy or sell from the user's CURRENT holdings to get there.
+
+    WHY THIS IS NEEDED (THE PROBLEM WITH WEIGHTS ALONE):
+        A percentage breakdown is not directly actionable. A retail user
+        seeing "AAPL 65%" still has to work out: 65% of what dollar
+        amount? At what share price? Compared to how many shares they
+        already hold? This function does that translation so the API
+        response can say "hold 12 shares (currently 7) -- buy 5" instead
+        of leaving that arithmetic to whoever consumes this endpoint.
+
+    THE KEY SUBTLETY -- WEIGHTS ARE SCALE-INVARIANT, SO WHICH TOTAL
+    INVESTMENT VALUE DO WE TARGET?
+        Target weights only fix a RATIO between tickers, not an absolute
+        dollar amount. A portfolio holding twice as much of everything in
+        the same 65/35 ratio has identical return, volatility, and Sharpe
+        -- the optimizer is mathematically indifferent between "rebalance
+        my current $9,400" and "invest a fresh $18,800 in this same
+        ratio." Some total investment value V must be chosen to turn
+        weights into concrete share counts, and the choice of V is a
+        genuine free parameter, not something the math hands us for free.
+
+    THE CHOICE MADE HERE: MINIMUM-REBALANCING PROJECTION.
+        Rather than arbitrarily assuming "use exactly today's portfolio
+        value" (which forces a full rebalance even when a much smaller
+        set of trades would achieve the same target RATIO once you allow
+        the total to drift slightly), this function picks the V that
+        requires the LEAST total dollar buying/selling from what the user
+        already holds. This is a standard least-squares projection: we
+        want to choose V to minimize the squared dollar deviation between
+        the target holding (weight_i * V) and the current holding
+        (market_value_i) across all tickers --
+
+            minimize_V  sum_i ( weight_i * V - market_value_i )^2
+
+        Differentiating with respect to V and setting the result to zero
+        gives a simple closed-form solution:
+
+            V* = sum_i(weight_i * market_value_i) / sum_i(weight_i^2)
+
+        This is the value of V that makes the target dollar amounts sit
+        as close as possible (in a least-squares sense) to what the user
+        currently holds -- i.e. the scaled version of the target
+        portfolio that requires the smallest total rebalancing trade.
+
+    Args:
+        weights:  Target weights for ONE portfolio, e.g. from
+                  max_sharpe_portfolio["weights"] --
+                  {"AAPL": 0.65, "MSFT": 0.35}.
+        holdings: The user's current per-ticker holdings, in the exact
+                  list-of-dicts shape _build_weighted_portfolio() already
+                  produces -- each dict has "ticker", "quantity",
+                  "latest_price", "market_value", "weight".
+
+    Returns:
+        Dictionary with keys:
+            "suggested_portfolio_value" — float, the computed V* (the
+                total dollar amount this target scales to, chosen to
+                minimize rebalancing from the user's current holdings)
+            "shares" — dict keyed by ticker, each value a dict with:
+                "target_shares"  — int, rounded target share count
+                "current_shares" — int, rounded current share count
+                "delta_shares"   — int, positive = buy, negative = sell,
+                                    0 = already correct
+                "target_value"   — float, dollar amount this ticker
+                                    should hold at V*
+
+    NOTE ON ROUNDING:
+        Share counts are rounded to the nearest whole share, since most
+        retail brokerages do not support fractional-share orders by
+        default. If fractional shares are supported for your audience,
+        drop the round() calls below and display the raw decimal instead
+        -- the underlying V* and target_value math is unaffected either way.
+    """
+    holdings_by_ticker = {h["ticker"]: h for h in holdings}
+
+    # V* = sum(w_i * market_value_i) / sum(w_i^2) -- see derivation above.
+    # Guard against a degenerate all-zero weight vector (shouldn't happen
+    # for a real portfolio, but avoids a ZeroDivisionError if it ever does).
+    numerator = sum(
+        weight * holdings_by_ticker[ticker]["market_value"]
+        for ticker, weight in weights.items()
+        if ticker in holdings_by_ticker
+    )
+    denominator = sum(weight**2 for weight in weights.values())
+    suggested_portfolio_value = numerator / denominator if denominator > 1e-12 else 0.0
+
+    shares: dict[str, dict] = {}
+    for ticker, weight in weights.items():
+        holding = holdings_by_ticker.get(ticker)
+        # Defensive: a target portfolio should only ever contain tickers
+        # from the original holdings, but skip cleanly rather than raise
+        # if one is ever missing (e.g. a data inconsistency upstream).
+        if holding is None:
+            continue
+
+        target_value = weight * suggested_portfolio_value
+        target_shares = round(target_value / holding["latest_price"])
+        current_shares = round(holding["quantity"])
+
+        shares[ticker] = {
+            "target_shares": target_shares,
+            "current_shares": current_shares,
+            "delta_shares": target_shares - current_shares,
+            "target_value": target_value,
+        }
+
+    return {
+        "suggested_portfolio_value": suggested_portfolio_value,
+        "shares": shares,
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN PIPELINE
 # ─────────────────────────────────────────────────────────────────────────────

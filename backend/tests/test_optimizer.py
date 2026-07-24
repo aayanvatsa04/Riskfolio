@@ -5,6 +5,7 @@ from app.engine.mpt_optimizer import (
     annualise_parameters,
     compute_analytical_frontier,
     compute_portfolio_stats,
+    compute_share_targets,
     run_mpt_optimization,
     simulate_random_portfolios,
 )
@@ -254,6 +255,122 @@ class TestComputePortfolioStats:
             weights, annual_mu, annual_sigma, 0.05, ["A", "B", "C"]
         )
         assert result["volatility"] >= 0
+
+
+# ─── Class 3a: compute_share_targets ──────────────────────────────────────────
+
+
+class TestComputeShareTargets:
+    """
+    Tests for compute_share_targets() -- translates target weights into
+    actionable share counts (buy/sell deltas) using the least-squares
+    "minimum rebalancing" projection to choose a concrete total dollar
+    value, since weights alone only fix a ratio, not an absolute amount.
+    """
+
+    @pytest.fixture
+    def sample_holdings(self):
+        """Two-ticker holdings where the user is overweight MSFT relative
+        to a typical target -- deliberately imbalanced so buy/sell deltas
+        in both directions are exercised, not just one."""
+        return [
+            {
+                "ticker": "AAPL",
+                "quantity": 5,
+                "latest_price": 200.0,
+                "market_value": 1000.0,
+                "weight": 1000.0 / 3000.0,
+            },
+            {
+                "ticker": "MSFT",
+                "quantity": 10,
+                "latest_price": 200.0,
+                "market_value": 2000.0,
+                "weight": 2000.0 / 3000.0,
+            },
+        ]
+
+    def test_suggested_value_matches_closed_form_derivation(self, sample_holdings):
+        """
+        Cross-check against the closed-form least-squares solution computed
+        independently (not by calling the function under test) --
+        V* = sum(w_i * market_value_i) / sum(w_i^2).
+        """
+        weights = {"AAPL": 0.65, "MSFT": 0.35}
+        result = compute_share_targets(weights, sample_holdings)
+
+        expected_v = (0.65 * 1000.0 + 0.35 * 2000.0) / (0.65**2 + 0.35**2)
+        assert abs(result["suggested_portfolio_value"] - expected_v) < 1e-6
+
+    def test_suggested_value_genuinely_minimizes_rebalancing(self, sample_holdings):
+        """
+        CORE CORRECTNESS CHECK: the computed suggested_portfolio_value
+        must give a STRICTLY LOWER total squared dollar deviation from
+        current holdings than nearby candidate values -- proving it is
+        actually the minimum, not merely a plausible-looking number.
+        """
+        weights = {"AAPL": 0.65, "MSFT": 0.35}
+        result = compute_share_targets(weights, sample_holdings)
+        v_star = result["suggested_portfolio_value"]
+
+        def squared_deviation(v: float) -> float:
+            return (weights["AAPL"] * v - 1000.0) ** 2 + (
+                weights["MSFT"] * v - 2000.0
+            ) ** 2
+
+        at_optimum = squared_deviation(v_star)
+        # Check several nearby values in both directions -- all must be
+        # strictly worse (higher squared deviation) than the optimum.
+        for offset in (-500.0, -100.0, -10.0, 10.0, 100.0, 500.0):
+            assert squared_deviation(v_star + offset) > at_optimum
+
+    def test_current_portfolio_weights_are_self_consistent(self, sample_holdings):
+        """
+        SANITY CHECK: if you feed a portfolio ITS OWN current weights
+        back in, the suggested_portfolio_value must exactly recover
+        today's actual total portfolio value, and every delta_shares
+        must be exactly 0 (buy/sell nothing -- you already hold this
+        exact portfolio). This is a strong self-consistency guarantee,
+        not just a plausibility check.
+        """
+        current_weights = {h["ticker"]: h["weight"] for h in sample_holdings}
+        actual_portfolio_value = sum(h["market_value"] for h in sample_holdings)
+
+        result = compute_share_targets(current_weights, sample_holdings)
+
+        assert abs(result["suggested_portfolio_value"] - actual_portfolio_value) < 1e-6
+        for ticker_result in result["shares"].values():
+            assert ticker_result["delta_shares"] == 0
+            assert ticker_result["target_shares"] == ticker_result["current_shares"]
+
+    def test_delta_shares_equals_target_minus_current(self, sample_holdings):
+        """delta_shares must always equal target_shares - current_shares,
+        for every ticker -- the arithmetic relationship the whole
+        function exists to compute."""
+        weights = {"AAPL": 0.65, "MSFT": 0.35}
+        result = compute_share_targets(weights, sample_holdings)
+        for ticker_result in result["shares"].values():
+            assert (
+                ticker_result["delta_shares"]
+                == ticker_result["target_shares"] - ticker_result["current_shares"]
+            )
+
+    def test_missing_ticker_in_holdings_skipped_not_raised(self, sample_holdings):
+        """A weight for a ticker absent from holdings must be skipped
+        cleanly, not raise -- defensive behaviour for a data
+        inconsistency upstream, rather than crashing the whole endpoint."""
+        weights = {"AAPL": 0.5, "MSFT": 0.3, "TSLA": 0.2}  # TSLA not in holdings
+        result = compute_share_targets(weights, sample_holdings)
+        assert "TSLA" not in result["shares"]
+        assert "AAPL" in result["shares"]
+        assert "MSFT" in result["shares"]
+
+    def test_zero_weight_vector_does_not_raise(self, sample_holdings):
+        """An all-zero weight vector (denominator sum(w_i^2) == 0) must
+        return a safe default rather than raising ZeroDivisionError."""
+        weights = {"AAPL": 0.0, "MSFT": 0.0}
+        result = compute_share_targets(weights, sample_holdings)
+        assert result["suggested_portfolio_value"] == 0.0
 
 
 # ─── Class 3b: compute_analytical_frontier ───────────────────────────────────
