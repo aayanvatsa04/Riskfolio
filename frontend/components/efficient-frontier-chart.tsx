@@ -2,7 +2,8 @@
 
 import { useMemo } from "react"
 import {
-  ScatterChart,
+  ComposedChart,
+  Line,
   Scatter,
   XAxis,
   YAxis,
@@ -40,6 +41,7 @@ type ChartPointWithLabel = ChartPoint & { label?: string }
 
 interface Props {
   frontierPoints: FrontierPoint[]
+  analyticalFrontierCurve: FrontierPoint[]
   maxSharpePortfolio: PortfolioPoint
   minVolPortfolio: PortfolioPoint
   currentPortfolio: PortfolioPoint
@@ -133,6 +135,7 @@ function getPaddedDomain(values: number[]): [number, number] {
 
 export function EfficientFrontierChart({
   frontierPoints,
+  analyticalFrontierCurve,
   maxSharpePortfolio,
   minVolPortfolio,
   currentPortfolio,
@@ -140,6 +143,14 @@ export function EfficientFrontierChart({
   const frontierData = useMemo(
     () => frontierPoints.map(toChartPoint),
     [frontierPoints],
+  )
+  const analyticalFrontierData = useMemo(
+    () =>
+      analyticalFrontierCurve.map((point) => ({
+        ...toChartPoint(point),
+        label: "Exact frontier",
+      })),
+    [analyticalFrontierCurve],
   )
 
   const maxSharpePoint = useMemo(
@@ -161,6 +172,7 @@ export function EfficientFrontierChart({
   const chartDomain = useMemo(() => {
     const allPoints: ChartPointWithLabel[] = [
       ...frontierData,
+      ...analyticalFrontierData,
       minVolPoint,
       maxSharpePoint,
       currentPoint,
@@ -170,11 +182,17 @@ export function EfficientFrontierChart({
       x: getPaddedDomain(allPoints.map((point) => point.x)),
       y: getPaddedDomain(allPoints.map((point) => point.y)),
     }
-  }, [currentPoint, frontierData, maxSharpePoint, minVolPoint])
+  }, [
+    analyticalFrontierData,
+    currentPoint,
+    frontierData,
+    maxSharpePoint,
+    minVolPoint,
+  ])
 
   return (
     <ResponsiveContainer width="100%" height={380}>
-      <ScatterChart margin={{ top: 24, right: 24, bottom: 52, left: 100 }}>
+      <ComposedChart margin={{ top: 24, right: 24, bottom: 52, left: 100 }}>
         <CartesianGrid
           stroke={gridColor}
           strokeDasharray="3 3"
@@ -227,6 +245,18 @@ export function EfficientFrontierChart({
           opacity={0.32}
         />
 
+        <Line
+          name="Exact frontier"
+          data={analyticalFrontierData}
+          dataKey="y"
+          stroke="#dc2626"
+          strokeWidth={2.5}
+          dot={false}
+          activeDot={false}
+          isAnimationActive={false}
+          legendType="line"
+        />
+
         <Scatter
           name="Min Volatility"
           data={[minVolPoint]}
@@ -247,7 +277,7 @@ export function EfficientFrontierChart({
           fill={currentPortfolioColor}
           shape={AmberMarker}
         />
-      </ScatterChart>
+      </ComposedChart>
     </ResponsiveContainer>
   )
 }

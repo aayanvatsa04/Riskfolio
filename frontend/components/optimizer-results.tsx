@@ -16,6 +16,7 @@ export type { PortfolioPoint, FrontierPoint }
 export interface OptimizerResult {
   tickers: string[]
   frontier_points: FrontierPoint[]
+  analytical_frontier_curve: FrontierPoint[]
   max_sharpe_portfolio: PortfolioPoint
   min_vol_portfolio: PortfolioPoint
   current_portfolio: PortfolioPoint
@@ -122,13 +123,14 @@ export function OptimizerResults({ result }: { result: OptimizerResult }) {
         </CardTitle>
         <p className="text-sm text-muted-foreground">
           {result.n_portfolios.toLocaleString()} random portfolios simulated
-          across {tickerList}. Each dot is a different possible allocation - the
-          frontier shows the best achievable risk-return trade-offs.
+          across {tickerList}. Grey dots are sampled allocations; the red line
+          is the mathematically exact frontier.
         </p>
       </CardHeader>
       <CardContent className="space-y-6">
         <EfficientFrontierChart
           frontierPoints={result.frontier_points}
+          analyticalFrontierCurve={result.analytical_frontier_curve ?? []}
           maxSharpePortfolio={result.max_sharpe_portfolio}
           minVolPortfolio={result.min_vol_portfolio}
           currentPortfolio={result.current_portfolio}
@@ -167,7 +169,9 @@ export function OptimizerResults({ result }: { result: OptimizerResult }) {
             of risk achievable from{" "}
             <span className="font-medium text-foreground">{tickerList}</span>.
             The <span className="font-medium text-blue-600">blue dot</span> is
-            the least volatile allocation. Your current weighting is shown in{" "}
+            the least volatile allocation. The{" "}
+            <span className="font-medium text-red-600">red line</span> traces
+            the exact Markowitz frontier. Your current weighting is shown in{" "}
             <span className="font-medium text-amber-600">amber</span> - if it
             sits inside the frontier cloud, rebalancing could improve your
             risk-return profile without changing which stocks you hold.
