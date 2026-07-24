@@ -12,7 +12,7 @@ from app.engine.monte_carlo_var import (
     run_price_path_analysis,
     run_var_analysis,
 )
-from app.engine.mpt_optimizer import run_mpt_optimization
+from app.engine.mpt_optimizer import compute_share_targets, run_mpt_optimization
 from app.engine.stress_test import run_stress_test_analysis
 from app.models import (
     HealthResponse,
@@ -279,9 +279,7 @@ async def optimize_portfolio(request: OptimizeRequest) -> dict:
     try:
         # Reuse the exact same helper that /analyze uses to convert
         # (ticker, quantity) pairs into portfolio weights via live prices.
-        # _portfolio_value and _holdings are not needed by the optimizer
-        # (it only uses weights), so we prefix them with _ to signal that.
-        portfolio_weights, _portfolio_value, _holdings = _build_weighted_portfolio(
+        portfolio_weights, portfolio_value, holdings = _build_weighted_portfolio(
             request.holdings
         )
 
@@ -298,13 +296,33 @@ async def optimize_portfolio(request: OptimizeRequest) -> dict:
 
         # Run the full MPT pipeline. verbose=False suppresses all print output —
         # the endpoint returns only the clean results dict as JSON.
-        return run_mpt_optimization(
+        result = run_mpt_optimization(
             tickers=list(portfolio_weights.keys()),
             current_weights=portfolio_weights,
             n_portfolios=request.n_portfolios,
             risk_free_rate=request.risk_free_rate,
             verbose=False,
         )
+
+        # Enrich with today's portfolio value and per-ticker holdings detail
+        # (same shape as /analyze's response) so a consumer can compute an
+        # ACTIONABLE target -- e.g. "buy 3 more shares of AAPL" -- rather
+        # than only ever seeing target weights as bare percentages.
+        result["portfolio_value"] = portfolio_value
+        result["holdings"] = holdings
+
+        # Attach actionable share targets to each of the three portfolio
+        # points. Computed here (not in the engine) since it needs the
+        # user's actual holdings (quantities, live prices), which the
+        # engine itself never sees -- it only ever works with weights.
+        for key in ("max_sharpe_portfolio", "min_vol_portfolio", "current_portfolio"):
+            portfolio_weights_for_point = result[key].get("weights")
+            if portfolio_weights_for_point:
+                result[key]["share_targets"] = compute_share_targets(
+                    portfolio_weights_for_point, holdings
+                )
+
+        return result
 
     except (AssertionError, ValueError) as exc:
         # AssertionError: from engine internal assertions (e.g. weight sum check)
