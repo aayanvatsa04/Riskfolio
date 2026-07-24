@@ -50,6 +50,21 @@ MIN_TRADING_DAYS_BY_PERIOD = {
 }
 CACHE_FRESHNESS_DAYS = 7
 
+# Separate, distinct purpose from MIN_TRADING_DAYS_BY_PERIOD above: that
+# dict governs whether CACHED data is complete enough to trust as fresh
+# (i.e. "does the cache have as much as we'd expect for this period").
+# This constant instead governs whether the TOTAL data actually
+# available -- cached or freshly fetched, doesn't matter -- is large
+# enough to compute a statistically meaningful ANNUALISED figure at all.
+# A newly-IPO'd ticker with only a handful of real trading days will
+# always fail this check, regardless of caching, since no amount of
+# caching can manufacture trading history that doesn't exist yet.
+# 252 = one full trading year, matching the ×252 annualisation factor
+# used throughout this engine -- annualising from meaningfully less
+# than a year of data is where the ×252 multiplication starts amplifying
+# sampling noise into wildly unstable "annual" figures.
+MIN_TRADING_DAYS_FOR_ANALYSIS = 252
+
 # ─────────────────────────────────────────────
 # SECTION 1: DATA INGESTION
 # ─────────────────────────────────────────────
@@ -158,7 +173,53 @@ def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFr
     else:
         prices = raw_data["Close"]
 
+    # Capture each ticker's OWN individual coverage BEFORE the joint
+    # dropna() below. This matters because dropna() drops any row where
+    # ANY ticker is missing a price -- so if one ticker (e.g. a stock
+    # that IPO'd last week) only has a handful of real trading days,
+    # the joint result gets truncated down to that tiny overlap for
+    # EVERY ticker in the request, not just the thin one. Recording the
+    # per-ticker counts now lets us name the actual culprit afterward,
+    # rather than just reporting "not enough data" with no explanation.
+    per_ticker_counts = prices.count()
+
     prices = prices.dropna()
+
+    # Only meaningful for period="5y" (the default, and the only period
+    # actually used by any of the three analysis engines -- see the
+    # module docstring). The dedicated /historical-prices endpoint can
+    # request other periods (e.g. "5d" for a quick price lookup), where
+    # this stricter analysis-grade check does not apply.
+    if period == "5y" and len(prices) < MIN_TRADING_DAYS_FOR_ANALYSIS:
+        thin_tickers = [
+            ticker
+            for ticker in tickers
+            if per_ticker_counts.get(ticker, 0) < MIN_TRADING_DAYS_FOR_ANALYSIS
+        ]
+        if thin_tickers:
+            names = ", ".join(thin_tickers)
+            plural = "s" if len(thin_tickers) > 1 else ""
+            raise ValueError(
+                f"Insufficient historical data: {names} "
+                f"{'have' if len(thin_tickers) > 1 else 'has'} fewer than "
+                f"{MIN_TRADING_DAYS_FOR_ANALYSIS} trading days of price "
+                f"history (likely a recent IPO or newly-listed ticker{plural}). "
+                f"At least {MIN_TRADING_DAYS_FOR_ANALYSIS} trading days "
+                "(roughly one year) are required to compute statistically "
+                "meaningful annualised risk and return figures. Try "
+                "removing this ticker or waiting for more trading history "
+                "to accumulate."
+            )
+        # No single ticker is individually thin, but the tickers still
+        # don't share enough overlapping trading days -- a rarer edge
+        # case (e.g. mismatched trading calendars), but worth a distinct,
+        # honest message rather than pointing at a specific ticker that
+        # isn't actually the cause.
+        raise ValueError(
+            f"Insufficient overlapping historical data across {', '.join(tickers)}: "
+            f"only {len(prices)} trading days are common to all tickers, but at "
+            f"least {MIN_TRADING_DAYS_FOR_ANALYSIS} are required."
+        )
 
     if _PRICE_CACHE:
         try:
