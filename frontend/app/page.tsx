@@ -1,10 +1,15 @@
 import { PortfolioForm } from "@/components/portfolio-form"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { TrendingUp } from "lucide-react"
 
 export default function Page() {
   return (
     <main className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-4xl">
+        <div className="mb-4 flex justify-end">
+          <ThemeToggle />
+        </div>
+
         {/* Header */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-3 mb-4">
