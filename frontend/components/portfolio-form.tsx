@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { apiBaseUrl } from "@/lib/api"
+import { fetchHistoricalPricesWithCache } from "@/lib/price-cache"
 import { portfolioDb, type SavedPortfolio } from "@/lib/portfolio-db"
 import {
   OptimizerResults,
@@ -48,6 +49,8 @@ interface PortfolioEntry {
   currentPrice: number | null
   priceStatus: "idle" | "loading" | "loaded" | "error"
   priceError?: string
+  priceFetchedAt?: string
+  priceSource?: "cache" | "network" | "stale-cache"
 }
 
 interface PortfolioRequest {
@@ -91,6 +94,15 @@ interface ApiErrorDetail {
 
 const DEFAULT_N_PORTFOLIOS = "5000"
 const DEFAULT_RISK_FREE_RATE = 0.05
+
+function formatCacheTimestamp(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value))
+}
 
 async function getErrorMessage(response: Response) {
   const errorData = await response.json().catch(() => null)
@@ -199,6 +211,8 @@ export function PortfolioForm() {
               currentPrice: null,
               priceStatus: ticker.trim() ? "loading" : "idle",
               priceError: undefined,
+              priceFetchedAt: undefined,
+              priceSource: undefined,
             }
           : entry,
       ),
@@ -221,20 +235,12 @@ export function PortfolioForm() {
         return window.setTimeout(() => {
           void (async () => {
             try {
-              const params = new URLSearchParams({
-                tickers: ticker,
+              const priceResult = await fetchHistoricalPricesWithCache({
+                apiBaseUrl: ENDPOINT,
+                tickers: [ticker],
                 period: "5d",
               })
-              const response = await fetch(
-                `${ENDPOINT}/api/v1/historical-prices?${params}`,
-              )
-
-              if (!response.ok) {
-                throw new Error(await getErrorMessage(response))
-              }
-
-              const data = await response.json()
-              const latestRow = data.rows?.at(-1)
+              const latestRow = priceResult.data.rows?.at(-1)
               const latestPrice = latestRow?.prices?.[ticker]
 
               if (
@@ -253,6 +259,8 @@ export function PortfolioForm() {
                         currentPrice: latestPrice,
                         priceStatus: "loaded",
                         priceError: undefined,
+                        priceFetchedAt: priceResult.fetchedAt,
+                        priceSource: priceResult.source,
                       }
                     : currentEntry,
                 ),
@@ -270,6 +278,8 @@ export function PortfolioForm() {
                           err instanceof Error
                             ? err.message
                             : "Failed to fetch price",
+                        priceFetchedAt: undefined,
+                        priceSource: undefined,
                       }
                     : currentEntry,
                 ),
@@ -705,6 +715,18 @@ export function PortfolioForm() {
                         {entry.priceError}
                       </p>
                     )}
+                    {entry.priceStatus === "loaded" &&
+                      entry.priceFetchedAt &&
+                      entry.priceSource && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {entry.priceSource === "network"
+                            ? "Updated"
+                            : entry.priceSource === "cache"
+                              ? "Cached"
+                              : "Using cached price from"}{" "}
+                          {formatCacheTimestamp(entry.priceFetchedAt)}
+                        </p>
+                      )}
                   </div>
                   <div className="col-span-1">
                     <Button

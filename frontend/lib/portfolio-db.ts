@@ -16,14 +16,33 @@ export interface SavedPortfolio {
   updatedAt: string
 }
 
+export interface HistoricalPriceRow {
+  date: string
+  prices: Record<string, number>
+}
+
+export interface CachedPriceResponse {
+  cacheKey: string
+  tickers: string[]
+  period: string
+  rows: HistoricalPriceRow[]
+  fetchedAt: string
+}
+
 class RiskfolioDatabase extends Dexie {
   savedPortfolios!: Table<SavedPortfolio, string>
+  priceResponses!: Table<CachedPriceResponse, string>
 
   constructor() {
     super("riskfolio")
 
     this.version(1).stores({
       savedPortfolios: "id, name, updatedAt, createdAt",
+    })
+
+    this.version(2).stores({
+      savedPortfolios: "id, name, updatedAt, createdAt",
+      priceResponses: "cacheKey, period, fetchedAt",
     })
   }
 }
