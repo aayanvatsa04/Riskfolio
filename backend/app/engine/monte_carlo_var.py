@@ -29,91 +29,9 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from app.engine.price_cache import (
-    SupabasePriceCache,
-    build_supabase_price_cache_from_env,
-)
-
-_PRICE_CACHE = build_supabase_price_cache_from_env() or SupabasePriceCache()
-
-MIN_CACHE_COMPLETENESS_RATIO = 0.85
-MIN_TRADING_DAYS_BY_PERIOD = {
-    "1d": 1,
-    "5d": 4,
-    "1mo": 18,
-    "3mo": 54,
-    "6mo": 107,
-    "1y": 214,
-    "2y": 428,
-    "5y": 1_071,
-    "10y": 2_142,
-}
-CACHE_FRESHNESS_DAYS = 7
-
 # ─────────────────────────────────────────────
 # SECTION 1: DATA INGESTION
 # ─────────────────────────────────────────────
-
-
-def _price_period_window(
-    period: str,
-) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
-    end_date = pd.Timestamp.now(tz="UTC").normalize()
-
-    if period == "max":
-        return None, end_date
-    if period == "ytd":
-        return pd.Timestamp(year=end_date.year, month=1, day=1), end_date
-
-    offsets = {
-        "1d": pd.Timedelta(days=7),
-        "5d": pd.Timedelta(days=14),
-        "1mo": pd.DateOffset(months=1),
-        "3mo": pd.DateOffset(months=3),
-        "6mo": pd.DateOffset(months=6),
-        "1y": pd.DateOffset(years=1),
-        "2y": pd.DateOffset(years=2),
-        "5y": pd.DateOffset(years=5),
-        "10y": pd.DateOffset(years=10),
-    }
-    offset = offsets.get(period)
-    if offset is None:
-        return None, end_date
-    return end_date - offset, end_date
-
-
-def _minimum_cached_trading_days(
-    period: str,
-    start_date: pd.Timestamp | None,
-    end_date: pd.Timestamp | None,
-) -> int | None:
-    if period in MIN_TRADING_DAYS_BY_PERIOD:
-        return MIN_TRADING_DAYS_BY_PERIOD[period]
-    if period == "ytd" and start_date is not None and end_date is not None:
-        business_days = len(pd.bdate_range(start=start_date, end=end_date))
-        return max(1, int(business_days * MIN_CACHE_COMPLETENESS_RATIO))
-    return None
-
-
-def _cache_covers_requested_period(
-    prices: pd.DataFrame,
-    period: str,
-    start_date: pd.Timestamp | None,
-    end_date: pd.Timestamp | None,
-) -> bool:
-    if prices.empty:
-        return False
-
-    minimum_rows = _minimum_cached_trading_days(period, start_date, end_date)
-    if minimum_rows is None or len(prices) < minimum_rows:
-        return False
-
-    if end_date is None:
-        return True
-
-    latest_cached_date = pd.Timestamp(prices.index.max()).date()
-    requested_end_date = pd.Timestamp(end_date).date()
-    return (requested_end_date - latest_cached_date).days <= CACHE_FRESHNESS_DAYS
 
 
 def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFrame:
@@ -131,25 +49,6 @@ def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFr
     """
     print(f"\n📥 Fetching 5-year historical data for: {tickers}...")
 
-    if _PRICE_CACHE:
-        start_date, end_date = _price_period_window(period)
-        try:
-            cached_prices = _PRICE_CACHE.query_prices(tickers, start_date, end_date)
-            if _cache_covers_requested_period(
-                cached_prices, period, start_date, end_date
-            ):
-                print(f"✅ Retrieved {len(cached_prices)} cached trading days.\n")
-                return cached_prices
-            if not cached_prices.empty:
-                print(
-                    "ℹ️ Cached price data is incomplete for "
-                    f"{period} ({len(cached_prices)} trading days); refreshing."
-                )
-        except Exception as exc:
-            print(
-                f"⚠️ Supabase price cache query failed; falling back to yfinance: {exc}"
-            )
-
     raw_data = yf.download(tickers, period=period, auto_adjust=True, progress=False)
 
     if len(tickers) == 1:
@@ -159,12 +58,6 @@ def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFr
         prices = raw_data["Close"]
 
     prices = prices.dropna()
-
-    if _PRICE_CACHE:
-        try:
-            _PRICE_CACHE.upsert_prices(prices, source="yfinance")
-        except Exception as exc:
-            print(f"⚠️ Supabase price cache upsert failed: {exc}")
 
     print(f"✅ Retrieved {len(prices)} trading days of data.\n")
     return prices
