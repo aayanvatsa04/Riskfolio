@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -25,7 +25,23 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { LoginForm } from "@/components/login-form"
+import { useSupabaseAuth } from "@/hooks/use-supabase-auth"
 import { apiBaseUrl } from "@/lib/api"
+import {
+  deleteCloudPortfolio,
+  mirrorLocalAndCloudPortfolios,
+  upsertCloudPortfolio,
+  type PortfolioSyncResult,
+} from "@/lib/cloud-portfolios"
 import { fetchHistoricalPricesWithCache } from "@/lib/price-cache"
 import { portfolioDb, type SavedPortfolio } from "@/lib/portfolio-db"
 import {
@@ -40,6 +56,10 @@ import {
   AlertTriangle,
   Loader2,
   Save,
+  Cloud,
+  LogIn,
+  LogOut,
+  RefreshCw,
 } from "lucide-react"
 
 interface PortfolioEntry {
@@ -104,6 +124,17 @@ function formatCacheTimestamp(value: string) {
   }).format(new Date(value))
 }
 
+function getSyncMessage(result: PortfolioSyncResult) {
+  const changes = [
+    result.uploaded ? `${result.uploaded} uploaded` : null,
+    result.downloaded ? `${result.downloaded} downloaded` : null,
+  ].filter((item): item is string => item !== null)
+
+  return changes.length
+    ? `Cloud sync complete: ${changes.join(", ")}.`
+    : "Cloud sync is up to date."
+}
+
 async function getErrorMessage(response: Response) {
   const errorData = await response.json().catch(() => null)
 
@@ -149,6 +180,19 @@ export function PortfolioForm() {
   const [portfolioName, setPortfolioName] = useState("")
   const [saveStatus, setSaveStatus] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const {
+    supabase,
+    user,
+    isConfigured: isSupabaseConfigured,
+    isLoading: isAuthLoading,
+    signInWithGoogle,
+    signOut,
+  } = useSupabaseAuth()
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [syncStatus, setSyncStatus] = useState<string | null>(null)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [isSigningIn, setIsSigningIn] = useState(false)
+  const syncedUserIdRef = useRef<string | null>(null)
 
   const ENDPOINT = apiBaseUrl
 
@@ -160,18 +204,89 @@ export function PortfolioForm() {
     priceStatus: "idle",
   })
 
-  const refreshSavedPortfolios = async () => {
+  const refreshSavedPortfolios = useCallback(async () => {
     const portfolios = await portfolioDb.savedPortfolios
       .orderBy("updatedAt")
       .reverse()
       .toArray()
 
     setSavedPortfolios(portfolios)
-  }
+  }, [])
 
   useEffect(() => {
     void refreshSavedPortfolios()
-  }, [])
+  }, [refreshSavedPortfolios])
+
+  const syncPortfolios = useCallback(async () => {
+    if (!supabase || !user) {
+      return
+    }
+
+    setIsSyncing(true)
+    setSyncStatus("Syncing cloud portfolios...")
+    setAuthError(null)
+
+    try {
+      const syncResult = await mirrorLocalAndCloudPortfolios(supabase, user.id)
+      await refreshSavedPortfolios()
+      setSyncStatus(getSyncMessage(syncResult))
+    } catch (err) {
+      setSyncStatus(null)
+      setAuthError(
+        err instanceof Error ? err.message : "Failed to sync portfolios.",
+      )
+      syncedUserIdRef.current = null
+    } finally {
+      setIsSyncing(false)
+    }
+  }, [refreshSavedPortfolios, supabase, user])
+
+  useEffect(() => {
+    if (!supabase || !user) {
+      syncedUserIdRef.current = null
+      return
+    }
+
+    if (syncedUserIdRef.current === user.id) {
+      return
+    }
+
+    syncedUserIdRef.current = user.id
+    void syncPortfolios()
+  }, [supabase, syncPortfolios, user])
+
+  useEffect(() => {
+    if (user) {
+      setIsSigningIn(false)
+    }
+  }, [user])
+
+  const handleGoogleSignIn = async () => {
+    setAuthError(null)
+
+    if (!isSupabaseConfigured) {
+      setAuthError("Supabase is not configured for this environment.")
+      return
+    }
+
+    setIsSigningIn(true)
+    const nextError = await signInWithGoogle()
+
+    if (nextError) {
+      setAuthError(nextError)
+      setIsSigningIn(false)
+    }
+  }
+
+  const handleSignOut = async () => {
+    setAuthError(null)
+    setSyncStatus(null)
+    const nextError = await signOut()
+
+    if (nextError) {
+      setAuthError(nextError)
+    }
+  }
 
   const addEntry = () => {
     setEntries([...entries, createBlankEntry()])
@@ -368,7 +483,22 @@ export function PortfolioForm() {
       await portfolioDb.savedPortfolios.put(portfolio)
       setSelectedPortfolioId(portfolio.id)
       setPortfolioName(portfolio.name)
-      setSaveStatus("Portfolio saved locally.")
+
+      if (supabase && user) {
+        try {
+          await upsertCloudPortfolio(supabase, user.id, portfolio)
+          setSaveStatus("Portfolio saved locally and synced to cloud.")
+          setSyncStatus("Cloud sync is up to date.")
+        } catch (err) {
+          setSaveStatus("Portfolio saved locally. Cloud sync failed.")
+          setAuthError(
+            err instanceof Error ? err.message : "Failed to sync portfolio.",
+          )
+        }
+      } else {
+        setSaveStatus("Portfolio saved locally.")
+      }
+
       await refreshSavedPortfolios()
     } catch (err) {
       setSaveStatus(
@@ -405,6 +535,20 @@ export function PortfolioForm() {
     }
 
     await portfolioDb.savedPortfolios.delete(selectedPortfolioId)
+
+    if (supabase && user) {
+      try {
+        await deleteCloudPortfolio(supabase, selectedPortfolioId)
+        setSyncStatus("Cloud copy deleted.")
+      } catch (err) {
+        setAuthError(
+          err instanceof Error
+            ? err.message
+            : "Failed to delete the cloud copy.",
+        )
+      }
+    }
+
     setSelectedPortfolioId(null)
     setPortfolioName("")
     setSaveStatus("Saved portfolio deleted.")
@@ -657,6 +801,86 @@ export function PortfolioForm() {
                     {saveStatus}
                   </p>
                 )}
+              </div>
+
+              <div className="flex flex-col gap-3 rounded-md border bg-background p-3 text-sm md:flex-row md:items-center md:justify-between">
+                <div className="flex items-start gap-3">
+                  <Cloud className="mt-0.5 h-4 w-4 text-primary" />
+                  <div className="space-y-1">
+                    <p className="font-medium">
+                      {user ? "Cloud sync enabled" : "Local-only by default"}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {user
+                        ? `Signed in as ${user.email ?? "your Supabase user"}.`
+                        : "Your portfolios stay in this browser unless you sign in."}
+                    </p>
+                    {(syncStatus || authError) && (
+                      <p
+                        className={
+                          authError
+                            ? "text-destructive"
+                            : "text-muted-foreground"
+                        }
+                        role={authError ? "alert" : "status"}
+                      >
+                        {authError ?? syncStatus}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  {user ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={isSyncing}
+                        onClick={() => void syncPortfolios()}
+                      >
+                        {isSyncing ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-4 w-4" />
+                        )}
+                        Sync now
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleSignOut()}
+                      >
+                        <LogOut className="h-4 w-4" />
+                        Sign out
+                      </Button>
+                    </>
+                  ) : (
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button type="button" variant="outline" size="sm">
+                          <LogIn className="h-4 w-4" />
+                          Sign in to sync
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Cloud sync</DialogTitle>
+                          <DialogDescription>
+                            Local portfolios remain private unless you sign in.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <LoginForm
+                          error={authError}
+                          isLoading={isAuthLoading || isSigningIn}
+                          onGoogleSignIn={() => void handleGoogleSignIn()}
+                        />
+                      </DialogContent>
+                    </Dialog>
+                  )}
+                </div>
               </div>
             </div>
 

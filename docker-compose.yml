@@ -6,8 +6,6 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       NEXT_PUBLIC_ORIGIN: ${NEXT_PUBLIC_ORIGIN:-http://localhost:8000}
-      SUPABASE_URL: ${SUPABASE_URL:-}
-      SUPABASE_KEY: ${SUPABASE_KEY:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -32,6 +30,8 @@ services:
     environment:
       NEXT_PUBLIC_ORIGIN: ${NEXT_PUBLIC_ORIGIN:-http://localhost:8000}
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:-}
       WATCHPACK_POLLING: "true"
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
