@@ -16,6 +16,13 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 
+const pathColor = "var(--muted-foreground)"
+const downsideColor = "var(--chart-5)"
+const upsideColor = "var(--chart-3)"
+const meanColor = "var(--chart-4)"
+const axisColor = "var(--muted-foreground)"
+const gridColor = "var(--border)"
+
 type HoldingRequest = {
   ticker: string
   quantity: number
@@ -366,24 +373,32 @@ export function MonteCarloSimulationChart({
               data={chartData}
               margin={{ top: 16, right: 24, bottom: 40, left: 64 }}
             >
-              <CartesianGrid strokeDasharray="3 3" opacity={0.35} />
+              <CartesianGrid
+                stroke={gridColor}
+                strokeDasharray="3 3"
+                opacity={0.55}
+              />
               <XAxis
                 dataKey="day"
-                tick={{ fontSize: 11 }}
+                axisLine={{ stroke: gridColor }}
+                tickLine={{ stroke: gridColor }}
+                tick={{ fontSize: 11, fill: axisColor }}
                 label={{
                   value: "Trading Day",
                   position: "insideBottom",
                   offset: -24,
                   style: {
                     fontSize: 12,
-                    fill: "hsl(var(--muted-foreground))",
+                    fill: axisColor,
                   },
                 }}
               />
               <YAxis
                 domain={yDomain}
                 tickFormatter={(value) => formatCompactCurrency(Number(value))}
-                tick={{ fontSize: 11 }}
+                axisLine={{ stroke: gridColor }}
+                tickLine={{ stroke: gridColor }}
+                tick={{ fontSize: 11, fill: axisColor }}
                 width={58}
                 label={{
                   value: "Portfolio Value",
@@ -392,19 +407,22 @@ export function MonteCarloSimulationChart({
                   offset: -48,
                   style: {
                     fontSize: 12,
-                    fill: "hsl(var(--muted-foreground))",
+                    fill: axisColor,
                   },
                 }}
               />
-              <Tooltip content={<SimulationTooltip />} />
+              <Tooltip
+                cursor={{ stroke: "var(--ring)", strokeDasharray: "3 3" }}
+                content={<SimulationTooltip />}
+              />
               {pathKeys.map((key) => (
                 <Line
                   key={key}
                   type="monotone"
                   dataKey={key}
-                  stroke="#94a3b8"
+                  stroke={pathColor}
                   strokeWidth={1}
-                  opacity={0.22}
+                  opacity={0.2}
                   dot={false}
                   isAnimationActive={false}
                 />
@@ -413,7 +431,7 @@ export function MonteCarloSimulationChart({
                 type="monotone"
                 dataKey="p05"
                 name="5th percentile"
-                stroke="#ef4444"
+                stroke={downsideColor}
                 strokeWidth={1.75}
                 dot={false}
                 isAnimationActive={false}
@@ -422,7 +440,7 @@ export function MonteCarloSimulationChart({
                 type="monotone"
                 dataKey="p95"
                 name="95th percentile"
-                stroke="#22c55e"
+                stroke={upsideColor}
                 strokeWidth={1.75}
                 dot={false}
                 isAnimationActive={false}
@@ -431,7 +449,7 @@ export function MonteCarloSimulationChart({
                 type="monotone"
                 dataKey="mean"
                 name="Mean"
-                stroke="#2563eb"
+                stroke={meanColor}
                 strokeWidth={2.5}
                 dot={false}
                 isAnimationActive={false}

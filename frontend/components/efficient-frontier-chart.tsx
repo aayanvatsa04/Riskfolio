@@ -12,6 +12,14 @@ import {
   Legend,
 } from "recharts"
 
+const frontierColor = "var(--muted-foreground)"
+const maxSharpeColor = "var(--chart-3)"
+const minVolatilityColor = "var(--chart-4)"
+const currentPortfolioColor = "var(--chart-2)"
+const axisColor = "var(--muted-foreground)"
+const gridColor = "var(--border)"
+const markerStrokeColor = "var(--background)"
+
 export type FrontierPoint = {
   expected_return: number
   volatility: number
@@ -94,15 +102,15 @@ const makeMarker = (color: string) =>
         cy={cy}
         r={9}
         fill={color}
-        stroke="white"
+        stroke={markerStrokeColor}
         strokeWidth={2.5}
       />
     )
   }
 
-const GreenMarker = makeMarker("#22c55e")
-const BlueMarker = makeMarker("#3b82f6")
-const AmberMarker = makeMarker("#f59e0b")
+const GreenMarker = makeMarker(maxSharpeColor)
+const BlueMarker = makeMarker(minVolatilityColor)
+const AmberMarker = makeMarker(currentPortfolioColor)
 
 function getPaddedDomain(values: number[]): [number, number] {
   const finiteValues = values.filter(Number.isFinite)
@@ -167,21 +175,27 @@ export function EfficientFrontierChart({
   return (
     <ResponsiveContainer width="100%" height={380}>
       <ScatterChart margin={{ top: 24, right: 24, bottom: 52, left: 100 }}>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
+        <CartesianGrid
+          stroke={gridColor}
+          strokeDasharray="3 3"
+          opacity={0.55}
+        />
         <XAxis
           type="number"
           dataKey="x"
           name="Volatility"
           unit="%"
           domain={chartDomain.x}
+          axisLine={{ stroke: gridColor }}
+          tickLine={{ stroke: gridColor }}
           label={{
             value: "Annual Volatility (%)",
             position: "insideBottom",
             offset: -22,
-            style: { fontSize: 12, fill: "hsl(var(--muted-foreground))" },
+            style: { fontSize: 12, fill: axisColor },
           }}
           tickFormatter={(value) => Number(value).toFixed(1)}
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: axisColor }}
         />
         <YAxis
           type="number"
@@ -189,17 +203,19 @@ export function EfficientFrontierChart({
           name="Return"
           unit="%"
           domain={chartDomain.y}
+          axisLine={{ stroke: gridColor }}
+          tickLine={{ stroke: gridColor }}
           label={{
             value: "Expected Annual Return (%)",
             angle: -90,
             dx: -48,
-            style: { fontSize: 12, fill: "hsl(var(--muted-foreground))" },
+            style: { fontSize: 12, fill: axisColor },
           }}
           tickFormatter={(value) => Number(value).toFixed(1)}
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: axisColor }}
         />
         <Tooltip
-          cursor={{ strokeDasharray: "3 3" }}
+          cursor={{ stroke: "var(--ring)", strokeDasharray: "3 3" }}
           content={<CustomTooltip />}
         />
         <Legend verticalAlign="top" height={36} />
@@ -207,28 +223,28 @@ export function EfficientFrontierChart({
         <Scatter
           name="Simulated portfolios"
           data={frontierData}
-          fill="#94a3b8"
-          opacity={0.4}
+          fill={frontierColor}
+          opacity={0.32}
         />
 
         <Scatter
           name="Min Volatility"
           data={[minVolPoint]}
-          fill="#3b82f6"
+          fill={minVolatilityColor}
           shape={BlueMarker}
         />
 
         <Scatter
           name="Max Sharpe"
           data={[maxSharpePoint]}
-          fill="#22c55e"
+          fill={maxSharpeColor}
           shape={GreenMarker}
         />
 
         <Scatter
           name="Your portfolio"
           data={[currentPoint]}
-          fill="#f59e0b"
+          fill={currentPortfolioColor}
           shape={AmberMarker}
         />
       </ScatterChart>
