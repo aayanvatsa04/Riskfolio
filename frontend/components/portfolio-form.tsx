@@ -1658,7 +1658,7 @@ export function PortfolioForm() {
                           {entry.companyName && (
                             <InputGroupAddon
                               align="inline-start"
-                              className="min-w-0 max-w-[65%] border-r pr-2 text-xs font-normal"
+                              className="min-w-0 flex-1 justify-end border-r px-2 text-right text-xs font-normal"
                               title={[
                                 entry.companyName,
                                 entry.exchange,
@@ -1667,7 +1667,7 @@ export function PortfolioForm() {
                                 .filter(Boolean)
                                 .join(" - ")}
                             >
-                              <span className="truncate">
+                              <span className="block w-full truncate text-right">
                                 {entry.companyName}
                               </span>
                             </InputGroupAddon>
@@ -1681,10 +1681,8 @@ export function PortfolioForm() {
                                 e.target.value.toUpperCase(),
                               )
                             }
-                            className={`uppercase md:px-2 ${
-                              entry.companyName
-                                ? "max-w-24 flex-none font-mono text-right"
-                                : ""
+                            className={`font-mono text-right uppercase md:px-2 ${
+                              entry.companyName ? "w-24 flex-none" : "flex-1"
                             }`}
                           />
                         </InputGroup>
