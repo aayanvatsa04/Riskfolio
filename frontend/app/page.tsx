@@ -1,42 +1,57 @@
+import { AppShell } from "@/components/app-shell"
 import { PortfolioForm } from "@/components/portfolio-form"
-import { ThemeToggle } from "@/components/theme-toggle"
 import { TrendingUp } from "lucide-react"
 
 export default function Page() {
   return (
-    <main className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8 max-w-4xl">
-        <div className="mb-4 flex justify-end">
-          <ThemeToggle />
-        </div>
-
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="p-3 rounded-xl bg-primary">
-              <TrendingUp className="h-8 w-8 text-primary-foreground" />
+    <AppShell>
+      <main className="min-h-screen">
+        <div className="mx-auto w-full max-w-[1800px] px-4 py-6 md:px-6 lg:px-8">
+          <div className="mb-6 flex flex-col gap-5 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-3xl">
+              <div className="mb-3 flex items-center gap-3">
+                <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+                  <TrendingUp className="size-5" />
+                </div>
+                <p className="font-mono text-xs text-muted-foreground">
+                  MONTE CARLO RISK TERMINAL
+                </p>
+              </div>
+              <h1 className="font-heading text-4xl font-semibold md:text-5xl">
+                Riskfolio
+              </h1>
+              <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
+                Portfolio risk analysis, stress testing, and efficient frontier
+                optimization for USD-quoted holdings.
+              </p>
             </div>
-            <h1 className="text-4xl font-bold tracking-tight">Riskfolio</h1>
+            <div className="grid grid-cols-3 gap-2 text-sm lg:min-w-[360px]">
+              <div className="rounded-lg border bg-card/80 p-3">
+                <p className="font-mono text-xs text-muted-foreground">VAR</p>
+                <p className="font-heading text-lg">Tail loss</p>
+              </div>
+              <div className="rounded-lg border bg-card/80 p-3">
+                <p className="font-mono text-xs text-muted-foreground">
+                  STRESS
+                </p>
+                <p className="font-heading text-lg">Shock paths</p>
+              </div>
+              <div className="rounded-lg border bg-card/80 p-3">
+                <p className="font-mono text-xs text-muted-foreground">MPT</p>
+                <p className="font-heading text-lg">Targets</p>
+              </div>
+            </div>
           </div>
-          <p className="text-muted-foreground text-lg max-w-2xl mx-auto text-balance">
-            Portfolio risk analysis and efficient frontier optimization for your
-            investment portfolio. Compare downside risk against risk-return
-            trade-offs with the same holdings.
-          </p>
-        </div>
 
-        {/* Portfolio Form */}
-        <PortfolioForm />
+          <PortfolioForm />
 
-        {/* Footer Info */}
-        <div className="mt-8 text-center text-sm text-muted-foreground">
-          <p>
+          <div className="mt-8 border-t pt-4 text-sm text-muted-foreground">
             VaR is calculated using Monte Carlo simulation. Frontier
             optimization uses historical prices to simulate random weighted
             portfolios.
-          </p>
+          </div>
         </div>
-      </div>
-    </main>
+      </main>
+    </AppShell>
   )
 }

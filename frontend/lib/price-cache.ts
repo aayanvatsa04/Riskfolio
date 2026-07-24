@@ -2,8 +2,10 @@ import {
   portfolioDb,
   type CachedPriceResponse,
   type HistoricalPriceRow,
+  type TickerMetadata,
 } from "@/lib/portfolio-db"
 import { apiUrl } from "@/lib/api"
+import { getPriceRefreshIntervalMs } from "@/lib/user-settings"
 
 type ApiErrorDetail = {
   msg?: string
@@ -14,6 +16,7 @@ export type HistoricalPricesResponse = {
   tickers: string[]
   period: string
   rows: HistoricalPriceRow[]
+  metadata?: Record<string, TickerMetadata>
 }
 
 export type HistoricalPricesResult = {
@@ -21,8 +24,6 @@ export type HistoricalPricesResult = {
   source: "cache" | "network" | "stale-cache"
   fetchedAt: string
 }
-
-const PRICE_CACHE_TTL_MS = 15 * 60 * 1000
 
 function normalizeTickers(tickers: string[]) {
   return Array.from(
@@ -34,14 +35,24 @@ function normalizeTickers(tickers: string[]) {
   ).sort()
 }
 
-function getPriceCacheKey(tickers: string[], period: string) {
-  return `${period}:${normalizeTickers(tickers).join(",")}`
+function getPriceCacheKey({
+  tickers,
+  period,
+  includeMetadata,
+}: {
+  tickers: string[]
+  period: string
+  includeMetadata: boolean
+}) {
+  const metadataSuffix = includeMetadata ? "metadata" : "prices"
+  return `${period}:${metadataSuffix}:${normalizeTickers(tickers).join(",")}`
 }
 
 function isFresh(cached: CachedPriceResponse) {
   const fetchedAt = Date.parse(cached.fetchedAt)
   return (
-    Number.isFinite(fetchedAt) && Date.now() - fetchedAt < PRICE_CACHE_TTL_MS
+    Number.isFinite(fetchedAt) &&
+    Date.now() - fetchedAt < getPriceRefreshIntervalMs()
   )
 }
 
@@ -50,6 +61,7 @@ function toResponse(cached: CachedPriceResponse): HistoricalPricesResponse {
     tickers: cached.tickers,
     period: cached.period,
     rows: cached.rows,
+    metadata: cached.metadata,
   }
 }
 
@@ -74,12 +86,18 @@ async function getErrorMessage(response: Response) {
 export async function fetchHistoricalPricesWithCache({
   tickers,
   period,
+  includeMetadata = false,
 }: {
   tickers: string[]
   period: string
+  includeMetadata?: boolean
 }): Promise<HistoricalPricesResult> {
   const normalizedTickers = normalizeTickers(tickers)
-  const cacheKey = getPriceCacheKey(normalizedTickers, period)
+  const cacheKey = getPriceCacheKey({
+    tickers: normalizedTickers,
+    period,
+    includeMetadata,
+  })
   const cached = await portfolioDb.priceResponses.get(cacheKey)
 
   if (cached && isFresh(cached)) {
@@ -95,6 +113,9 @@ export async function fetchHistoricalPricesWithCache({
       tickers: normalizedTickers.join(","),
       period,
     })
+    if (includeMetadata) {
+      params.set("include_metadata", "true")
+    }
     const response = await fetch(apiUrl(`historical-prices?${params}`))
 
     if (!response.ok) {
@@ -109,6 +130,7 @@ export async function fetchHistoricalPricesWithCache({
       tickers: normalizedTickers,
       period,
       rows: data.rows,
+      metadata: data.metadata,
       fetchedAt,
     })
 

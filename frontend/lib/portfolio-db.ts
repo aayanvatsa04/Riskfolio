@@ -21,17 +21,38 @@ export interface HistoricalPriceRow {
   prices: Record<string, number>
 }
 
+export interface TickerMetadata {
+  name?: string | null
+  currency?: string | null
+  exchange?: string | null
+}
+
 export interface CachedPriceResponse {
   cacheKey: string
   tickers: string[]
   period: string
   rows: HistoricalPriceRow[]
+  metadata?: Record<string, TickerMetadata>
+  fetchedAt: string
+}
+
+export type AnalysisCacheType =
+  | "var"
+  | "optimize"
+  | "stress"
+  | "monte-carlo-paths"
+
+export interface CachedAnalysisResponse {
+  cacheKey: string
+  analysisType: AnalysisCacheType
+  response: unknown
   fetchedAt: string
 }
 
 class RiskfolioDatabase extends Dexie {
   savedPortfolios!: Table<SavedPortfolio, string>
   priceResponses!: Table<CachedPriceResponse, string>
+  analysisResponses!: Table<CachedAnalysisResponse, string>
 
   constructor() {
     super("riskfolio")
@@ -43,6 +64,12 @@ class RiskfolioDatabase extends Dexie {
     this.version(2).stores({
       savedPortfolios: "id, name, updatedAt, createdAt",
       priceResponses: "cacheKey, period, fetchedAt",
+    })
+
+    this.version(3).stores({
+      savedPortfolios: "id, name, updatedAt, createdAt",
+      priceResponses: "cacheKey, period, fetchedAt",
+      analysisResponses: "cacheKey, analysisType, fetchedAt",
     })
   }
 }

@@ -12,6 +12,8 @@ from app.models.optimizer import (
     OptimizeResponse,
     OptimizeTimingBreakdown,
     PortfolioPoint,
+    ShareTarget,
+    ShareTargets,
 )
 from app.models.stress import (
     ShocksApplied,
@@ -37,6 +39,8 @@ __all__ = [
     "OptimizeTimingBreakdown",
     "PortfolioPoint",
     "PortfolioRequest",
+    "ShareTarget",
+    "ShareTargets",
     "ShocksApplied",
     "StressScenarioResult",
     "StressTestRequest",

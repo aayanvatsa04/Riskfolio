@@ -148,7 +148,7 @@ export function EfficientFrontierChart({
     () =>
       analyticalFrontierCurve.map((point) => ({
         ...toChartPoint(point),
-        label: "Exact frontier",
+        label: "Analytical frontier",
       })),
     [analyticalFrontierCurve],
   )
@@ -246,7 +246,7 @@ export function EfficientFrontierChart({
         />
 
         <Line
-          name="Exact frontier"
+          name="Analytical frontier"
           data={analyticalFrontierData}
           dataKey="y"
           stroke="#dc2626"

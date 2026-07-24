@@ -4,6 +4,7 @@ import asyncio
 
 import httpx
 import pandas as pd
+import pytest
 
 from app.main import app
 
@@ -35,6 +36,11 @@ def _engine_response() -> dict:
             "total_s": 2.33,
         },
     }
+
+
+@pytest.fixture(autouse=True)
+def patch_currency_lookup(monkeypatch):
+    monkeypatch.setattr("app.main._get_quote_currency", lambda _ticker: "USD")
 
 
 def test_health_check():
@@ -136,6 +142,58 @@ def test_analyze_rejects_invalid_quantity():
     )
 
     assert response.status_code == 422
+
+
+def test_analyze_rejects_confirmed_non_usd_ticker(monkeypatch):
+    monkeypatch.setattr("app.main._get_quote_currency", lambda _ticker: "EUR")
+
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/api/v1/analyze",
+            json={"holdings": [{"ticker": "BMW.DE", "quantity": 10}]},
+        )
+    )
+
+    assert response.status_code == 422
+    assert "USD-quoted tickers only" in response.json()["detail"]
+
+
+def test_analyze_allows_unknown_currency_metadata(monkeypatch):
+    fetch_calls = []
+    engine_calls = []
+
+    monkeypatch.setattr("app.main._get_quote_currency", lambda _ticker: None)
+
+    def fake_fetch_historical_prices(
+        tickers: list[str], period: str = "5y"
+    ) -> pd.DataFrame:
+        fetch_calls.append({"tickers": tickers, "period": period})
+        return pd.DataFrame(
+            {"AAPL": [100.0]},
+            index=pd.to_datetime(["2026-05-29"]),
+        )
+
+    def fake_run_var_analysis(**kwargs):
+        engine_calls.append(kwargs)
+        return _engine_response()
+
+    monkeypatch.setattr(
+        "app.main.fetch_historical_prices", fake_fetch_historical_prices
+    )
+    monkeypatch.setattr("app.main.run_var_analysis", fake_run_var_analysis)
+
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/api/v1/analyze",
+            json={"holdings": [{"ticker": "AAPL", "quantity": 10}]},
+        )
+    )
+
+    assert response.status_code == 200
+    assert fetch_calls == [{"tickers": ["AAPL"], "period": "5d"}]
+    assert engine_calls[0]["portfolio"] == {"AAPL": 1.0}
 
 
 def test_analyze_rejects_invalid_horizon():
@@ -269,6 +327,97 @@ def test_monte_carlo_paths_calls_engine_with_slider_payload(monkeypatch):
             "horizon": 45,
             "n_paths": 80,
             "volatility_multiplier": 1.35,
+        }
+    ]
+
+
+def test_optimize_attaches_share_targets(monkeypatch):
+    fetch_calls = []
+    engine_calls = []
+
+    def fake_fetch_historical_prices(
+        tickers: list[str], period: str = "5y"
+    ) -> pd.DataFrame:
+        fetch_calls.append({"tickers": tickers, "period": period})
+        return pd.DataFrame(
+            {"AAPL": [100.0], "MSFT": [200.0]},
+            index=pd.to_datetime(["2026-05-29"]),
+        )
+
+    def fake_run_mpt_optimization(**kwargs):
+        engine_calls.append(kwargs)
+        return {
+            "tickers": kwargs["tickers"],
+            "frontier_points": [],
+            "analytical_frontier_curve": [],
+            "max_sharpe_portfolio": {
+                "expected_return": 0.18,
+                "volatility": 0.22,
+                "sharpe": 0.59,
+                "weights": {"AAPL": 0.75, "MSFT": 0.25},
+            },
+            "min_vol_portfolio": {
+                "expected_return": 0.08,
+                "volatility": 0.12,
+                "sharpe": 0.25,
+                "weights": {"AAPL": 0.25, "MSFT": 0.75},
+            },
+            "current_portfolio": {
+                "expected_return": 0.12,
+                "volatility": 0.16,
+                "sharpe": 0.43,
+                "weights": kwargs["current_weights"],
+            },
+            "risk_free_rate": kwargs["risk_free_rate"],
+            "n_portfolios": kwargs["n_portfolios"],
+            "timing": {
+                "data_fetch_s": 0.01,
+                "log_returns_s": 0.001,
+                "statistics_s": 0.001,
+                "optimization_s": 0.01,
+                "analytical_frontier_s": 0.002,
+                "total_s": 0.024,
+            },
+        }
+
+    monkeypatch.setattr(
+        "app.main.fetch_historical_prices", fake_fetch_historical_prices
+    )
+    monkeypatch.setattr("app.main.run_mpt_optimization", fake_run_mpt_optimization)
+
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/api/v1/optimize",
+            json={
+                "holdings": [
+                    {"ticker": "aapl", "quantity": 10},
+                    {"ticker": "MSFT", "quantity": 5},
+                ],
+                "n_portfolios": 500,
+                "risk_free_rate": 0.05,
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    max_sharpe_targets = body["max_sharpe_portfolio"]["share_targets"]["shares"]
+    current_targets = body["current_portfolio"]["share_targets"]["shares"]
+    assert max_sharpe_targets["AAPL"]["action"] == "buy"
+    assert max_sharpe_targets["AAPL"]["shares_to_trade"] == 5.0
+    assert max_sharpe_targets["MSFT"]["action"] == "sell"
+    assert max_sharpe_targets["MSFT"]["shares_to_trade"] == 2.5
+    assert current_targets["AAPL"]["action"] == "already_correct"
+    assert current_targets["MSFT"]["action"] == "already_correct"
+    assert fetch_calls == [{"tickers": ["AAPL", "MSFT"], "period": "5d"}]
+    assert engine_calls == [
+        {
+            "tickers": ["AAPL", "MSFT"],
+            "current_weights": {"AAPL": 0.5, "MSFT": 0.5},
+            "n_portfolios": 500,
+            "risk_free_rate": 0.05,
+            "verbose": False,
         }
     ]
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -13,6 +13,22 @@ class PortfolioPoint(BaseModel):
     volatility: float
     sharpe: float
     weights: dict[str, float] | None = None
+    share_targets: ShareTargets | None = None
+
+
+class ShareTarget(BaseModel):
+    action: Literal["buy", "sell", "already_correct"]
+    current_shares: float
+    target_shares: float
+    shares_to_trade: float
+    latest_price: float
+    current_weight: float
+    target_weight: float
+
+
+class ShareTargets(BaseModel):
+    portfolio_value: float
+    shares: dict[str, ShareTarget]
 
 
 class FrontierPoint(BaseModel):

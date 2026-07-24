@@ -15,6 +15,12 @@ import { Activity, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  getAnalysisCacheKey,
+  readCachedAnalysisResponse,
+  writeCachedAnalysisResponse,
+} from "@/lib/analysis-cache"
 import { apiUrl } from "@/lib/api"
 
 const pathColor = "var(--muted-foreground)"
@@ -158,6 +164,7 @@ export function MonteCarloSimulationChart({
   const [volatilityPercent, setVolatilityPercent] = useState(100)
   const [horizon, setHorizon] = useState(initialHorizon)
   const [data, setData] = useState<SimulationResponse | null>(null)
+  const [dataRequestKey, setDataRequestKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -171,56 +178,80 @@ export function MonteCarloSimulationChart({
     setHorizon(initialHorizon)
   }, [initialHorizon])
 
+  const simulationRequest = useMemo(
+    () => ({
+      holdings: requestHoldings,
+      horizon,
+      n_paths: pathCount,
+      volatility_multiplier: volatilityPercent / 100,
+    }),
+    [horizon, pathCount, requestHoldings, volatilityPercent],
+  )
+  const simulationRequestKey = useMemo(
+    () => getAnalysisCacheKey("monte-carlo-paths", simulationRequest),
+    [simulationRequest],
+  )
+
   useEffect(() => {
-    const controller = new AbortController()
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        setIsLoading(true)
+    let cancelled = false
+
+    void readCachedAnalysisResponse<SimulationResponse>(
+      "monte-carlo-paths",
+      simulationRequest,
+    ).then((cached) => {
+      if (cancelled) {
+        return
+      }
+
+      if (cached) {
+        setData(cached.response)
+        setDataRequestKey(simulationRequestKey)
         setError(null)
-
-        try {
-          const response = await fetch(apiUrl("monte-carlo-paths"), {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              holdings: requestHoldings,
-              horizon,
-              n_paths: pathCount,
-              volatility_multiplier: volatilityPercent / 100,
-            }),
-            signal: controller.signal,
-          })
-
-          if (!response.ok) {
-            throw new Error(await getErrorMessage(response))
-          }
-
-          setData((await response.json()) as SimulationResponse)
-        } catch (err) {
-          if (err instanceof DOMException && err.name === "AbortError") {
-            return
-          }
-
-          setError(
-            err instanceof Error
-              ? err.message
-              : "Failed to simulate Monte Carlo paths.",
-          )
-        } finally {
-          if (!controller.signal.aborted) {
-            setIsLoading(false)
-          }
-        }
-      })()
-    }, 450)
+      }
+    })
 
     return () => {
-      window.clearTimeout(timer)
-      controller.abort()
+      cancelled = true
     }
-  }, [holdingsKey, horizon, pathCount, requestHoldings, volatilityPercent])
+  }, [simulationRequest, simulationRequestKey])
+
+  const runSimulation = async () => {
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const response = await fetch(apiUrl("monte-carlo-paths"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(simulationRequest),
+      })
+
+      if (!response.ok) {
+        throw new Error(await getErrorMessage(response))
+      }
+
+      const nextData = (await response.json()) as SimulationResponse
+      await writeCachedAnalysisResponse(
+        "monte-carlo-paths",
+        simulationRequest,
+        nextData,
+      )
+      setData(nextData)
+      setDataRequestKey(simulationRequestKey)
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to simulate Monte Carlo paths.",
+      )
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const isDataStale = Boolean(data) && dataRequestKey !== simulationRequestKey
 
   const chartData = useMemo<ChartRow[]>(() => {
     if (!data) {
@@ -276,19 +307,36 @@ export function MonteCarloSimulationChart({
             </p>
           )}
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={isLoading}
-          onClick={() => {
-            setPathCount(100)
-            setVolatilityPercent(100)
-            setHorizon(initialHorizon)
-          }}
-        >
-          Reset
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isLoading}
+            onClick={() => {
+              setPathCount(100)
+              setVolatilityPercent(100)
+              setHorizon(initialHorizon)
+            }}
+          >
+            Reset
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={isLoading}
+            onClick={() => void runSimulation()}
+          >
+            {isLoading ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                Updating
+              </>
+            ) : (
+              "Run Paths"
+            )}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
@@ -343,6 +391,14 @@ export function MonteCarloSimulationChart({
           />
         </div>
       </div>
+
+      {(isDataStale || (!data && !isLoading && !error)) && (
+        <div className="rounded-md border bg-background/80 px-3 py-2 text-xs text-muted-foreground">
+          {isDataStale
+            ? "Path settings changed. Run Paths to update this cached chart."
+            : "Run Paths to generate and cache the simulation chart."}
+        </div>
+      )}
 
       <div className="relative h-[380px] w-full">
         {isLoading && (
@@ -446,8 +502,13 @@ export function MonteCarloSimulationChart({
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <div className="flex h-full items-center justify-center rounded-md bg-muted p-4 text-sm text-muted-foreground">
-            Simulation loading
+          <div className="grid h-full grid-rows-[1fr_auto] gap-4 rounded-md bg-muted/50 p-4">
+            <Skeleton className="h-full w-full" />
+            <div className="grid grid-cols-3 gap-3">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-full" />
+            </div>
           </div>
         )}
       </div>

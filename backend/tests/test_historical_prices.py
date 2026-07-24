@@ -17,6 +17,7 @@ async def _request(method: str, url: str, **kwargs) -> httpx.Response:
 
 def test_historical_prices_returns_serialized_price_rows(monkeypatch):
     calls = []
+    monkeypatch.setattr("app.main._get_quote_currency", lambda _ticker: "USD")
 
     def fake_fetch_historical_prices(
         tickers: list[str], period: str = "5y"
@@ -45,6 +46,43 @@ def test_historical_prices_returns_serialized_price_rows(monkeypatch):
         ],
     }
     assert calls == [{"tickers": ["AAPL", "TSLA"], "period": "1y"}]
+
+
+def test_historical_prices_can_include_ticker_metadata(monkeypatch):
+    monkeypatch.setattr("app.main._get_quote_currency", lambda _ticker: "USD")
+    monkeypatch.setattr(
+        "app.main._get_ticker_metadata",
+        lambda ticker: {
+            "name": "Apple Inc." if ticker == "AAPL" else "Tesla, Inc.",
+            "currency": "USD",
+            "exchange": "NMS",
+        },
+    )
+
+    def fake_fetch_historical_prices(
+        tickers: list[str], period: str = "5y"
+    ) -> pd.DataFrame:
+        return pd.DataFrame(
+            {"AAPL": [191.25], "TSLA": [252.75]},
+            index=pd.to_datetime(["2026-05-29"]),
+        )
+
+    monkeypatch.setattr(
+        "app.main.fetch_historical_prices", fake_fetch_historical_prices
+    )
+
+    response = asyncio.run(
+        _request(
+            "GET",
+            "/api/v1/historical-prices?tickers=AAPL,TSLA&period=5d&include_metadata=true",
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.json()["metadata"] == {
+        "AAPL": {"name": "Apple Inc.", "currency": "USD", "exchange": "NMS"},
+        "TSLA": {"name": "Tesla, Inc.", "currency": "USD", "exchange": "NMS"},
+    }
 
 
 def test_historical_prices_rejects_invalid_period():
