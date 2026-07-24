@@ -36,7 +36,18 @@ function loadRootPublicEnv() {
 loadRootPublicEnv()
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  async rewrites() {
+    if (process.env.NODE_ENV !== "development") {
+      return []
+    }
+
+    return [
+      {
+        source: "/backend/:path*",
+        destination: "http://localhost:8000/:path*",
+      },
+    ]
+  },
 }
 
 export default nextConfig

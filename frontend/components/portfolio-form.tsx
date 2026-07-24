@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/dialog"
 import { LoginForm } from "@/components/login-form"
 import { useSupabaseAuth } from "@/hooks/use-supabase-auth"
-import { apiBaseUrl } from "@/lib/api"
+import { apiUrl } from "@/lib/api"
 import {
   deleteCloudPortfolio,
   mirrorLocalAndCloudPortfolios,
@@ -194,8 +194,6 @@ export function PortfolioForm() {
   const [isSigningIn, setIsSigningIn] = useState(false)
   const syncedUserIdRef = useRef<string | null>(null)
 
-  const ENDPOINT = apiBaseUrl
-
   const createBlankEntry = (): PortfolioEntry => ({
     id: Date.now().toString(),
     ticker: "",
@@ -351,7 +349,6 @@ export function PortfolioForm() {
           void (async () => {
             try {
               const priceResult = await fetchHistoricalPricesWithCache({
-                apiBaseUrl: ENDPOINT,
                 tickers: [ticker],
                 period: "5d",
               })
@@ -408,7 +405,7 @@ export function PortfolioForm() {
     return () => {
       timers.forEach((timer) => window.clearTimeout(timer))
     }
-  }, [ENDPOINT, entries])
+  }, [entries])
 
   const buildHoldingsRequest = (): PortfolioRequest["holdings"] | null => {
     const validEntries = entries.filter(
@@ -595,7 +592,7 @@ export function PortfolioForm() {
           n_simulations: nSimulations,
         }
 
-        const response = await fetch(`${ENDPOINT}/api/v1/analyze`, {
+        const response = await fetch(apiUrl("analyze"), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -634,7 +631,7 @@ export function PortfolioForm() {
           holdings: data.holdings ?? [],
         })
       } else {
-        const response = await fetch(`${ENDPOINT}/api/v1/optimize`, {
+        const response = await fetch(apiUrl("optimize"), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1218,7 +1215,6 @@ export function PortfolioForm() {
                   ticker: holding.ticker,
                   quantity: holding.quantity,
                 }))}
-                apiBaseUrl={ENDPOINT}
                 initialHorizon={result.horizon}
               />
             )}

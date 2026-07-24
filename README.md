@@ -270,11 +270,9 @@ ready - started server on http://localhost:3000
 
 Open `http://localhost:3000` in your browser.
 
-By default the frontend calls `http://localhost:8000` for the API. If the
-backend is running on a different port, pass the URL explicitly:
-```bash
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8001 pnpm exec next dev --port 3000
-```
+By default the frontend calls `/backend/api/v1/...` on its own origin,
+matching the Vercel route prefix. In local development, Next rewrites
+`/backend/*` to the FastAPI server at `http://localhost:8000/*`.
 
 ---
 

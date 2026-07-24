@@ -15,6 +15,7 @@ import { Activity, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
+import { apiUrl } from "@/lib/api"
 
 const pathColor = "var(--muted-foreground)"
 const downsideColor = "var(--chart-5)"
@@ -68,7 +69,6 @@ type SimulationTooltipProps = {
 
 type MonteCarloSimulationChartProps = {
   holdings: HoldingRequest[]
-  apiBaseUrl: string
   initialHorizon: number
 }
 
@@ -152,7 +152,6 @@ function SimulationTooltip({ active, payload }: SimulationTooltipProps) {
 
 export function MonteCarloSimulationChart({
   holdings,
-  apiBaseUrl,
   initialHorizon,
 }: MonteCarloSimulationChartProps) {
   const [pathCount, setPathCount] = useState(100)
@@ -180,22 +179,19 @@ export function MonteCarloSimulationChart({
         setError(null)
 
         try {
-          const response = await fetch(
-            `${apiBaseUrl}/api/v1/monte-carlo-paths`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                holdings: requestHoldings,
-                horizon,
-                n_paths: pathCount,
-                volatility_multiplier: volatilityPercent / 100,
-              }),
-              signal: controller.signal,
+          const response = await fetch(apiUrl("monte-carlo-paths"), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
             },
-          )
+            body: JSON.stringify({
+              holdings: requestHoldings,
+              horizon,
+              n_paths: pathCount,
+              volatility_multiplier: volatilityPercent / 100,
+            }),
+            signal: controller.signal,
+          })
 
           if (!response.ok) {
             throw new Error(await getErrorMessage(response))
@@ -224,14 +220,7 @@ export function MonteCarloSimulationChart({
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [
-    apiBaseUrl,
-    holdingsKey,
-    horizon,
-    pathCount,
-    requestHoldings,
-    volatilityPercent,
-  ])
+  }, [holdingsKey, horizon, pathCount, requestHoldings, volatilityPercent])
 
   const chartData = useMemo<ChartRow[]>(() => {
     if (!data) {

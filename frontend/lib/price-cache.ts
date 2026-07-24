@@ -3,6 +3,7 @@ import {
   type CachedPriceResponse,
   type HistoricalPriceRow,
 } from "@/lib/portfolio-db"
+import { apiUrl } from "@/lib/api"
 
 type ApiErrorDetail = {
   msg?: string
@@ -71,11 +72,9 @@ async function getErrorMessage(response: Response) {
 }
 
 export async function fetchHistoricalPricesWithCache({
-  apiBaseUrl,
   tickers,
   period,
 }: {
-  apiBaseUrl: string
   tickers: string[]
   period: string
 }): Promise<HistoricalPricesResult> {
@@ -96,9 +95,7 @@ export async function fetchHistoricalPricesWithCache({
       tickers: normalizedTickers.join(","),
       period,
     })
-    const response = await fetch(
-      `${apiBaseUrl}/api/v1/historical-prices?${params}`,
-    )
+    const response = await fetch(apiUrl(`historical-prices?${params}`))
 
     if (!response.ok) {
       throw new Error(await getErrorMessage(response))
