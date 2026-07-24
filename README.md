@@ -4,6 +4,8 @@
 
 **NUS Orbital 2026 — Apollo 11** | Team: RAGs to Riches
 
+**🔗 Live App:** [riskfolio-nine.vercel.app](https://riskfolio-nine.vercel.app)
+
 ---
 
 ## What is Riskfolio?
@@ -20,7 +22,11 @@ Riskfolio is a web platform where users input their stock portfolio and the syst
 | Value at Risk (VaR) — 95% confidence interval | ✅ Complete |
 | Expected Shortfall (CVaR) — average tail loss | ✅ Complete |
 | MPT Optimizer — Efficient Frontier with Max Sharpe and Min Vol portfolios | ✅ Complete |
-| Automated Pytest Suite (61 tests) | ✅ Complete |
+| Analytical Efficient Frontier — exact frontier via `scipy.optimize` (SLSQP), plotted alongside the Monte Carlo cloud | ✅ Complete |
+| Stress Test Module — baseline vs. shocked VaR/CVaR under a hypothetical scenario (per-ticker price shocks + volatility multiplier) | ✅ Complete |
+| Monte Carlo Price Paths — interactive simulated price-path visualization | ✅ Complete |
+| Supabase-backed price caching — 7-day freshness, 85% completeness validation, graceful degradation to `yfinance` | ✅ Complete |
+| Automated Pytest Suite (109 tests, including Hypothesis property-based tests) | ✅ Complete |
 
 ---
 
@@ -32,7 +38,7 @@ Riskfolio is a web platform where users input their stock portfolio and the syst
 
 **Computation:** NumPy · Pandas
 
-**Database:** PostgreSQL
+**Database:** PostgreSQL (via Supabase — historical price caching layer)
 
 **DevOps:** Docker · GitHub Actions
 
@@ -45,23 +51,38 @@ Riskfolio/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                  # FastAPI app and API endpoints
-│   │   ├── models.py                # Pydantic request/response models
+│   │   ├── settings.py              # Environment/config loading
+│   │   ├── supabase.py              # Supabase client setup
+│   │   ├── db_types.py              # Generated Supabase table types
+│   │   ├── models/                  # Pydantic request/response models (one file per feature)
+│   │   │   ├── common.py            # Shared holding/health models
+│   │   │   ├── var.py               # VaR request/response models
+│   │   │   ├── optimizer.py         # MPT optimizer request/response models
+│   │   │   ├── monte_carlo.py       # Monte Carlo price-path models
+│   │   │   └── stress.py            # Stress test request/response models
 │   │   └── engine/
-│   │       ├── __init__.py
-│   │       ├── monte_carlo_var.py   # Monte Carlo VaR engine
-│   │       └── mpt_optimizer.py     # MPT Efficient Frontier optimizer
-│   ├── tests/                       # Pytest test suite
+│   │       ├── monte_carlo_var.py   # Monte Carlo VaR engine + price-path simulation
+│   │       ├── mpt_optimizer.py     # MPT Efficient Frontier optimizer (Monte Carlo + analytical/SLSQP)
+│   │       ├── stress_test.py       # Stress test engine (baseline vs. shocked VaR)
+│   │       └── price_cache.py       # Supabase price-caching layer
+│   ├── tests/                       # Pytest test suite (109 tests)
 │   ├── pyproject.toml               # uv project metadata and dependencies
 │   └── uv.lock                      # locked backend dependency graph
 ├── frontend/
+│   ├── app/                         # Next.js app router pages
+│   ├── components/                  # Portfolio form, charts (Efficient Frontier, Monte Carlo paths), shadcn/ui primitives
+│   ├── lib/                         # API client, IndexedDB (Dexie) portfolio storage
 │   ├── package.json
-│   ├── pnpm-lock.yaml
-│   └── ...                          # Next.js frontend
+│   └── pnpm-lock.yaml
+├── supabase/
+│   ├── config.toml
+│   └── migrations/                  # SQL migrations for the price-history cache table
 ├── .github/
 │   └── workflows/
-│       └── test.yml                 # GitHub Actions CI/CD pipeline (TBD for future milestones)
+│       └── test.yml                 # GitHub Actions CI/CD pipeline (lint, format check, tests — backend and frontend)
 ├── .env.example                     # template — copy to .env for local development
 ├── .gitignore
+├── HANDOFF.md                       # Backend → frontend integration notes for in-flight features
 └── README.md
 ```
 
@@ -267,7 +288,9 @@ curl -s http://localhost:8000/api/v1/optimize \
 | `GET` | `/api/v1/health` | Health check |
 | `GET` | `/api/v1/historical-prices?tickers=AAPL&period=5d` | Fetch historical prices |
 | `POST` | `/api/v1/analyze` | Monte Carlo VaR analysis |
-| `POST` | `/api/v1/optimize` | MPT Efficient Frontier optimization |
+| `POST` | `/api/v1/optimize` | MPT Efficient Frontier optimization (Monte Carlo cloud + exact analytical frontier via SLSQP) |
+| `POST` | `/api/v1/monte-carlo-paths` | Simulated portfolio price paths over time |
+| `POST` | `/api/v1/stress-test` | Baseline vs. shocked VaR/CVaR under a hypothetical scenario |
 
 **Example `/api/v1/analyze` payload:**
 ```json
@@ -293,6 +316,23 @@ curl -s http://localhost:8000/api/v1/optimize \
   "risk_free_rate": 0.05
 }
 ```
+Returns both `frontier_points` (the Monte Carlo cloud) and
+`analytical_frontier_curve` (the exact frontier via `scipy.optimize`,
+same shape) so both can be plotted on the same chart.
+
+**Example `/api/v1/stress-test` payload:**
+```json
+{
+  "holdings": [
+    { "ticker": "AAPL", "quantity": 10 },
+    { "ticker": "MSFT", "quantity": 5 }
+  ],
+  "price_shocks": { "AAPL": -0.15 },
+  "volatility_multiplier": 1.5
+}
+```
+Returns `baseline` (unshocked) and `shocked` (scenario applied) VaR/CVaR
+results, identically shaped, for direct side-by-side comparison.
 
 ---
 
@@ -301,7 +341,8 @@ curl -s http://localhost:8000/api/v1/optimize \
 ```bash
 cd backend
 uv run pytest
-uv run ruff check app/
+uv run ruff check .
+uv run ruff format --check .
 ```
 
 Frontend checks:
@@ -315,8 +356,8 @@ pnpm run build
 
 ## Running the Engines Standalone
 
-Both engines can be run directly for development and debugging. Each prints
-a full human-readable report when run this way.
+Each engine can be run directly for development and debugging, printing a
+full human-readable report.
 
 **Monte Carlo VaR engine:**
 ```bash
@@ -328,6 +369,12 @@ uv run python -m app.engine.monte_carlo_var
 ```bash
 cd backend
 uv run python -m app.engine.mpt_optimizer
+```
+
+**Stress test engine:**
+```bash
+cd backend
+uv run python -m app.engine.stress_test
 ```
 
 > **Note:** Always use `python -m app.engine.<module>` from the `backend/`
@@ -360,8 +407,8 @@ all contributors use identical package versions.
 
 | Practice | Implementation |
 |---|---|
-| Modular Architecture | Monte Carlo and MPT engines strictly decoupled from FastAPI layer |
-| Test-Driven Development (TDD) | 61-test Pytest suite covering both engines, API endpoints, and data pipeline |
+| Modular Architecture | Monte Carlo, MPT, and Stress Test engines strictly decoupled from the FastAPI layer |
+| Test-Driven Development (TDD) | 109-test Pytest suite (hand-written + Hypothesis property-based tests) covering all three engines, API endpoints, and data pipeline |
 | Branch Protection & PR Workflow | All changes via feature branches and pull requests — direct pushes to main blocked |
 | Conventional Commits | Standardised commit message format enforced across the team |
 | Pre-commit Hooks | Ruff linter and formatter run automatically on every commit |
