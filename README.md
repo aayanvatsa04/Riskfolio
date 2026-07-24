@@ -25,8 +25,9 @@ Riskfolio is a web platform where users input their stock portfolio and the syst
 | Analytical Efficient Frontier — exact frontier via `scipy.optimize` (SLSQP), plotted alongside the Monte Carlo cloud | ✅ Complete |
 | Stress Test Module — baseline vs. shocked VaR/CVaR under a hypothetical scenario (per-ticker price shocks + volatility multiplier) | ✅ Complete |
 | Monte Carlo Price Paths — interactive simulated price-path visualization | ✅ Complete |
-| Supabase-backed price caching — 7-day freshness, 85% completeness validation, graceful degradation to `yfinance` | ✅ Complete |
-| Automated Pytest Suite (109 tests, including Hypothesis property-based tests) | ✅ Complete |
+| Browser price caching — Dexie-backed quote response cache with stale fallback | ✅ Complete |
+| Optional cloud portfolio sync — Google OAuth via Supabase with local-first privacy | ✅ Complete |
+| Automated Pytest Suite, including Hypothesis property-based tests | ✅ Complete |
 
 ---
 
@@ -38,7 +39,7 @@ Riskfolio is a web platform where users input their stock portfolio and the syst
 
 **Computation:** NumPy · Pandas
 
-**Database:** PostgreSQL (via Supabase — historical price caching layer)
+**Storage:** IndexedDB (Dexie) for local portfolios and browser price cache · Supabase Auth/Postgres for optional cloud portfolio sync
 
 **DevOps:** Docker · GitHub Actions
 
@@ -52,8 +53,6 @@ Riskfolio/
 │   ├── app/
 │   │   ├── main.py                  # FastAPI app and API endpoints
 │   │   ├── settings.py              # Environment/config loading
-│   │   ├── supabase.py              # Supabase client setup
-│   │   ├── db_types.py              # Generated Supabase table types
 │   │   ├── models/                  # Pydantic request/response models (one file per feature)
 │   │   │   ├── common.py            # Shared holding/health models
 │   │   │   ├── var.py               # VaR request/response models
@@ -63,20 +62,19 @@ Riskfolio/
 │   │   └── engine/
 │   │       ├── monte_carlo_var.py   # Monte Carlo VaR engine + price-path simulation
 │   │       ├── mpt_optimizer.py     # MPT Efficient Frontier optimizer (Monte Carlo + analytical/SLSQP)
-│   │       ├── stress_test.py       # Stress test engine (baseline vs. shocked VaR)
-│   │       └── price_cache.py       # Supabase price-caching layer
-│   ├── tests/                       # Pytest test suite (109 tests)
+│   │       └── stress_test.py       # Stress test engine (baseline vs. shocked VaR)
+│   ├── tests/                       # Pytest test suite
 │   ├── pyproject.toml               # uv project metadata and dependencies
 │   └── uv.lock                      # locked backend dependency graph
 ├── frontend/
 │   ├── app/                         # Next.js app router pages
 │   ├── components/                  # Portfolio form, charts (Efficient Frontier, Monte Carlo paths), shadcn/ui primitives
-│   ├── lib/                         # API client, IndexedDB (Dexie) portfolio storage
+│   ├── lib/                         # API client, Dexie local storage, Supabase sync helpers
 │   ├── package.json
 │   └── pnpm-lock.yaml
 ├── supabase/
 │   ├── config.toml
-│   └── migrations/                  # SQL migrations for the price-history cache table
+│   └── migrations/                  # SQL migrations for portfolio sync and RLS
 ├── .github/
 │   └── workflows/
 │       └── test.yml                 # GitHub Actions CI/CD pipeline (lint, format check, tests — backend and frontend)
@@ -167,6 +165,31 @@ cp .env.example .env
 The root `.env` stores local configuration used by Docker Compose and the
 frontend. Keep `.env.example` committed to the repo, but keep `.env` local —
 it is gitignored and should never be committed.
+
+Optional Supabase cloud sync uses public browser-safe variables:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+```
+
+The frontend also reads these values from the repo-root `.env` during local
+Next.js startup, so you do not need a second `.env.local` inside `frontend/`.
+If these values are absent, Riskfolio still works in local-only mode. Portfolio
+data remains in the user's browser and is not uploaded.
+
+To enable cloud portfolio sync, configure Google OAuth in Supabase Auth and add
+these redirect URLs:
+
+```text
+http://localhost:3000/auth/callback
+https://your-production-domain/auth/callback
+```
+
+Apply `supabase/migrations/20260724090000_create_portfolios.sql` to the
+Supabase project before using cloud sync. The migration creates the
+`public.portfolios` table, removes the old price cache table, and enables RLS
+so authenticated users can only access their own portfolios.
 
 ---
 
