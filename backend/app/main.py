@@ -13,6 +13,7 @@ from app.engine.monte_carlo_var import (
     run_var_analysis,
 )
 from app.engine.mpt_optimizer import run_mpt_optimization
+from app.engine.stress_test import run_stress_test_analysis
 from app.models import (
     HealthResponse,
     HoldingRequest,
@@ -21,6 +22,8 @@ from app.models import (
     OptimizeRequest,
     OptimizeResponse,
     PortfolioRequest,
+    StressTestRequest,
+    StressTestResponse,
     VaRResponse,
 )
 from app.settings import settings
@@ -315,6 +318,77 @@ async def optimize_portfolio(request: OptimizeRequest) -> dict:
         raise HTTPException(
             status_code=500,
             detail=f"Unable to complete portfolio optimisation: {exc}",
+        ) from exc
+
+
+@api_v1.post("/stress-test", response_model=StressTestResponse)
+async def stress_test_portfolio(request: StressTestRequest) -> dict:
+    """
+    POST /api/v1/stress-test
+
+    Runs the SAME Monte Carlo VaR analysis twice for this portfolio: once
+    unshocked (baseline) and once with the requested price shocks and/or
+    volatility multiplier applied (shocked) — so the two can be compared
+    side by side.
+
+    WHAT THIS ENDPOINT DOES:
+        1. Receives holdings (ticker + quantity pairs), per-ticker price
+           shocks, a volatility multiplier, and the usual VaR settings
+        2. Calls _build_weighted_portfolio() to convert quantities to
+           weights using live market prices — same helper used by
+           /analyze and /optimize, so "today's portfolio value" means
+           exactly the same thing across all three endpoints
+        3. Calls run_stress_test_analysis(), which internally re-runs the
+           existing VaR engine's Monte Carlo simulation twice (baseline
+           and shocked) on identical historical data
+        4. Returns both results plus an echo of the exact scenario that
+           was simulated
+
+    REQUEST BODY:  StressTestRequest  (validated by Pydantic before this runs)
+    RESPONSE BODY: StressTestResponse — "baseline" and "shocked" are
+        IDENTICALLY SHAPED, so the frontend can render both sides of the
+        comparison through the same component.
+
+    ERROR RESPONSES:
+        422 Unprocessable Entity — invalid holdings, or price shocks that
+            (combined) reduce the portfolio to zero or negative value
+        500 Internal Server Error — unexpected failure (e.g. yfinance
+            down, ticker not found, numpy error)
+    """
+    try:
+        # Reuse the exact same helper /analyze and /optimize use to
+        # convert (ticker, quantity) pairs into portfolio weights via
+        # live prices — this keeps "today's portfolio value" consistent
+        # across every endpoint in the API.
+        portfolio_weights, portfolio_value, _holdings = _build_weighted_portfolio(
+            request.holdings
+        )
+
+        return run_stress_test_analysis(
+            portfolio=portfolio_weights,
+            portfolio_value=portfolio_value,
+            price_shocks=request.price_shocks,
+            volatility_multiplier=request.volatility_multiplier,
+            horizon=request.horizon,
+            confidence_level=request.confidence_level,
+            n_simulations=request.n_simulations,
+            verbose=False,
+        )
+
+    except (AssertionError, ValueError) as exc:
+        # AssertionError: from engine internal assertions (e.g. weight
+        # sum check). ValueError: from apply_price_shocks() when combined
+        # shocks reduce the portfolio to zero/negative value, from the
+        # volatility_multiplier guard, or from _build_weighted_portfolio.
+        # All are user-caused input problems -> 422 Unprocessable Entity.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    except Exception as exc:
+        # Anything else (yfinance network error, numpy failure, etc.) is
+        # an unexpected server-side problem -> 500 Internal Server Error
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to complete stress test: {exc}",
         ) from exc
 
 
