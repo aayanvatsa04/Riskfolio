@@ -133,6 +133,34 @@ function getPaddedDomain(values: number[]): [number, number] {
   return [min - padding, max + padding]
 }
 
+function percentile(sortedValues: number[], p: number): number {
+  if (sortedValues.length === 0) return 0
+  const index = (p / 100) * (sortedValues.length - 1)
+  const lower = Math.floor(index)
+  const upper = Math.ceil(index)
+  if (lower === upper) return sortedValues[lower]
+  const weight = index - lower
+  return sortedValues[lower] * (1 - weight) + sortedValues[upper] * weight
+}
+
+function getRobustDomain(
+  alwaysIncludeValues: number[],
+  cloudValues: number[],
+  percentileBounds: [number, number] = [1, 97],
+): [number, number] {
+  const sortedCloud = cloudValues.filter(Number.isFinite).sort((a, b) => a - b)
+
+  const clippedCloudBounds =
+    sortedCloud.length > 0
+      ? [
+          percentile(sortedCloud, percentileBounds[0]),
+          percentile(sortedCloud, percentileBounds[1]),
+        ]
+      : []
+
+  return getPaddedDomain([...alwaysIncludeValues, ...clippedCloudBounds])
+}
+
 export function EfficientFrontierChart({
   frontierPoints,
   analyticalFrontierCurve,
@@ -170,8 +198,7 @@ export function EfficientFrontierChart({
   )
 
   const chartDomain = useMemo(() => {
-    const allPoints: ChartPointWithLabel[] = [
-      ...frontierData,
+    const alwaysIncludePoints: ChartPointWithLabel[] = [
       ...analyticalFrontierData,
       minVolPoint,
       maxSharpePoint,
@@ -179,8 +206,14 @@ export function EfficientFrontierChart({
     ]
 
     return {
-      x: getPaddedDomain(allPoints.map((point) => point.x)),
-      y: getPaddedDomain(allPoints.map((point) => point.y)),
+      x: getRobustDomain(
+        alwaysIncludePoints.map((point) => point.x),
+        frontierData.map((point) => point.x),
+      ),
+      y: getRobustDomain(
+        alwaysIncludePoints.map((point) => point.y),
+        frontierData.map((point) => point.y),
+      ),
     }
   }, [
     analyticalFrontierData,
