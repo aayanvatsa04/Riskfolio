@@ -148,6 +148,8 @@ export function StressTestResults({
   isLoading: boolean
   isStale?: boolean
 }) {
+  const skeletonClass = isLoading ? "" : "animate-none bg-muted/70"
+
   if (!result) {
     return (
       <Card>
@@ -161,11 +163,11 @@ export function StressTestResults({
           <div className="rounded-md border bg-background/80 px-3 py-2 text-sm text-muted-foreground">
             {isLoading
               ? "Updating stress scenario..."
-              : "Run Stress Test to generate baseline and shocked outputs."}
+              : "No stress analysis yet. Run all analyses to populate this panel."}
           </div>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Skeleton className="h-72 w-full" />
-            <Skeleton className="h-72 w-full" />
+            <Skeleton className={`h-72 w-full ${skeletonClass}`} />
+            <Skeleton className={`h-72 w-full ${skeletonClass}`} />
           </div>
         </CardContent>
       </Card>

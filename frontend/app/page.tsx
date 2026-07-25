@@ -5,41 +5,22 @@ import { TrendingUp } from "lucide-react"
 export default function Page() {
   return (
     <AppShell>
-      <main className="min-h-screen">
+      <main className="min-h-screen overflow-x-hidden">
         <div className="mx-auto w-full max-w-[1800px] px-4 py-6 md:px-6 lg:px-8">
-          <div className="mb-6 flex flex-col gap-5 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="mb-6 border-b pb-6">
             <div className="max-w-3xl">
               <div className="mb-3 flex items-center gap-3">
                 <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
                   <TrendingUp className="size-5" />
                 </div>
-                <p className="font-mono text-xs text-muted-foreground">
-                  MONTE CARLO RISK TERMINAL
-                </p>
+                <h1 className="font-heading text-4xl font-semibold md:text-5xl">
+                  Riskfolio
+                </h1>
               </div>
-              <h1 className="font-heading text-4xl font-semibold md:text-5xl">
-                Riskfolio
-              </h1>
               <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
                 Portfolio risk analysis, stress testing, and efficient frontier
                 optimization for USD-quoted holdings.
               </p>
-            </div>
-            <div className="grid grid-cols-3 gap-2 text-sm lg:min-w-[360px]">
-              <div className="rounded-lg border bg-card/80 p-3">
-                <p className="font-mono text-xs text-muted-foreground">VAR</p>
-                <p className="font-heading text-lg">Tail loss</p>
-              </div>
-              <div className="rounded-lg border bg-card/80 p-3">
-                <p className="font-mono text-xs text-muted-foreground">
-                  STRESS
-                </p>
-                <p className="font-heading text-lg">Shock paths</p>
-              </div>
-              <div className="rounded-lg border bg-card/80 p-3">
-                <p className="font-mono text-xs text-muted-foreground">MPT</p>
-                <p className="font-heading text-lg">Targets</p>
-              </div>
             </div>
           </div>
 

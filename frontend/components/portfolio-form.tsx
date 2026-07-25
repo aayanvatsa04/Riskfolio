@@ -31,7 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Tooltip,
   TooltipContent,
@@ -153,9 +153,18 @@ interface ApiErrorDetail {
   message?: string
 }
 
+const DEFAULT_CONFIDENCE_LEVEL = 95
+const CONFIDENCE_LEVEL_OPTIONS = [90, 95, 99] as const
 const DEFAULT_N_PORTFOLIOS = "5000"
 const DEFAULT_RISK_FREE_RATE = 0.05
 const AUTOSAVE_DELAY_MS = 900
+const STARTER_PORTFOLIO_NAME = "Starter 30/30/40 Portfolio"
+const STARTER_PORTFOLIO_VALUE = 100_000
+const STARTER_PORTFOLIO_ALLOCATIONS = [
+  { ticker: "GOOGL", weight: 0.3 },
+  { ticker: "TSLA", weight: 0.3 },
+  { ticker: "AAPL", weight: 0.4 },
+] as const
 
 function formatCacheTimestamp(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -212,6 +221,24 @@ function getDefaultPortfolioName(holdings: PortfolioRequest["holdings"]) {
   return tickers ? `${tickers} Portfolio` : "Untitled Portfolio"
 }
 
+function normalizeConfidenceLevel(value: number | null | undefined): number {
+  const nextValue = Number(value)
+
+  return CONFIDENCE_LEVEL_OPTIONS.some((option) => option === nextValue)
+    ? nextValue
+    : DEFAULT_CONFIDENCE_LEVEL
+}
+
+function createStarterEntries(): PortfolioEntry[] {
+  return STARTER_PORTFOLIO_ALLOCATIONS.map((allocation) => ({
+    id: `starter-${allocation.ticker}`,
+    ticker: allocation.ticker,
+    quantity: 0,
+    currentPrice: null,
+    priceStatus: "loading",
+  }))
+}
+
 async function getErrorMessage(response: Response) {
   const errorData = await response.json().catch(() => null)
 
@@ -230,24 +257,52 @@ async function getErrorMessage(response: Response) {
   return `Server error: ${response.status}`
 }
 
+function AnalysisPlaceholderCard({
+  title,
+  description,
+  isActive = false,
+}: {
+  title: string
+  description: string
+  isActive?: boolean
+}) {
+  const skeletonClass = isActive ? "" : "animate-none bg-muted/70"
+
+  return (
+    <Card className="border-dashed bg-card/70">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <TrendingUp className="h-5 w-5 text-muted-foreground" />
+          {title}
+        </CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Skeleton className={`h-20 w-full ${skeletonClass}`} />
+          <Skeleton className={`h-20 w-full ${skeletonClass}`} />
+          <Skeleton className={`h-20 w-full ${skeletonClass}`} />
+        </div>
+        <Skeleton className={`h-56 w-full ${skeletonClass}`} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Skeleton className={`h-10 w-full ${skeletonClass}`} />
+          <Skeleton className={`h-10 w-full ${skeletonClass}`} />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export function PortfolioForm() {
-  const [entries, setEntries] = useState<PortfolioEntry[]>([
-    {
-      id: "1",
-      ticker: "",
-      quantity: 0,
-      currentPrice: null,
-      priceStatus: "idle",
-    },
-  ])
-  const [confidenceLevel, setConfidenceLevel] = useState<number>(95)
+  const [entries, setEntries] = useState<PortfolioEntry[]>(createStarterEntries)
+  const [confidenceLevel, setConfidenceLevel] = useState<number>(
+    DEFAULT_CONFIDENCE_LEVEL,
+  )
   const [horizon, setHorizon] = useState<number>(22)
   const [nSimulations, setNSimulations] = useState<number>(10000)
-  const [analysisMode, setAnalysisMode] = useState<
-    "var" | "stress" | "optimize"
-  >("var")
   const [nPortfolios, setNPortfolios] = useState<string>(DEFAULT_N_PORTFOLIOS)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isVarLoading, setIsVarLoading] = useState(false)
+  const [isOptimizerLoading, setIsOptimizerLoading] = useState(false)
   const [result, setResult] = useState<VaRResult | null>(null)
   const [optimizerResult, setOptimizerResult] =
     useState<OptimizerResult | null>(null)
@@ -257,6 +312,8 @@ export function PortfolioForm() {
   const [stressResultCacheKey, setStressResultCacheKey] = useState<
     string | null
   >(null)
+  const [varError, setVarError] = useState<string | null>(null)
+  const [optimizerError, setOptimizerError] = useState<string | null>(null)
   const [stressError, setStressError] = useState<string | null>(null)
   const [isStressLoading, setIsStressLoading] = useState(false)
   const [stressPriceShocks, setStressPriceShocks] = useState<
@@ -268,7 +325,7 @@ export function PortfolioForm() {
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string | null>(
     null,
   )
-  const [portfolioName, setPortfolioName] = useState("")
+  const [portfolioName, setPortfolioName] = useState(STARTER_PORTFOLIO_NAME)
   const [saveStatus, setSaveStatus] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [isAutosaving, setIsAutosaving] = useState(false)
@@ -296,6 +353,8 @@ export function PortfolioForm() {
     async () => {},
   )
   const lastAutosaveKeyRef = useRef<string | null>(null)
+  const hasCheckedInitialPortfolioRef = useRef(false)
+  const hasSeededStarterPortfolioRef = useRef(false)
 
   const createBlankEntry = (): PortfolioEntry => ({
     id: Date.now().toString(),
@@ -331,6 +390,14 @@ export function PortfolioForm() {
       window.removeEventListener(USER_SETTINGS_CHANGED_EVENT, refreshSettings)
     }
   }, [])
+
+  useEffect(() => {
+    const nextConfidenceLevel = normalizeConfidenceLevel(confidenceLevel)
+
+    if (nextConfidenceLevel !== confidenceLevel) {
+      setConfidenceLevel(nextConfidenceLevel)
+    }
+  }, [confidenceLevel])
 
   const syncPortfolios = useCallback(async () => {
     if (!supabase || !user) {
@@ -408,6 +475,8 @@ export function PortfolioForm() {
     setOptimizerResult(null)
     setStressResult(null)
     setStressResultCacheKey(null)
+    setVarError(null)
+    setOptimizerError(null)
     setStressError(null)
     setError(null)
     setEntries([...entries, createBlankEntry()])
@@ -419,6 +488,8 @@ export function PortfolioForm() {
       setOptimizerResult(null)
       setStressResult(null)
       setStressResultCacheKey(null)
+      setVarError(null)
+      setOptimizerError(null)
       setStressError(null)
       setError(null)
       setEntries(entries.filter((entry) => entry.id !== id))
@@ -434,6 +505,8 @@ export function PortfolioForm() {
     setOptimizerResult(null)
     setStressResult(null)
     setStressResultCacheKey(null)
+    setVarError(null)
+    setOptimizerError(null)
     setStressError(null)
     setError(null)
     setEntries(
@@ -448,6 +521,8 @@ export function PortfolioForm() {
     setOptimizerResult(null)
     setStressResult(null)
     setStressResultCacheKey(null)
+    setVarError(null)
+    setOptimizerError(null)
     setStressError(null)
     setStressPriceShocks({})
     setStressVolatilityPercent(100)
@@ -696,13 +771,16 @@ export function PortfolioForm() {
     setSelectedPortfolioId(portfolio.id)
     setPortfolioName(portfolio.name)
     setEntries(getEntriesFromPortfolio(portfolio))
-    setConfidenceLevel(portfolio.confidenceLevel)
+    const nextConfidenceLevel = normalizeConfidenceLevel(
+      portfolio.confidenceLevel,
+    )
+    setConfidenceLevel(nextConfidenceLevel)
     setHorizon(portfolio.horizon)
     setNSimulations(portfolio.nSimulations)
     lastAutosaveKeyRef.current = getPortfolioSnapshotKey({
       holdings: portfolio.holdings,
       name: portfolio.name,
-      confidenceLevel: portfolio.confidenceLevel,
+      confidenceLevel: nextConfidenceLevel,
       horizon: portfolio.horizon,
       nSimulations: portfolio.nSimulations,
     })
@@ -710,11 +788,13 @@ export function PortfolioForm() {
     setOptimizerResult(null)
     setStressResult(null)
     setStressResultCacheKey(null)
+    setVarError(null)
+    setOptimizerError(null)
     setStressError(null)
     setStressPriceShocks({})
     setStressVolatilityPercent(100)
     setError(null)
-    setSaveStatus(`Loaded ${portfolio.name}.`)
+    setSaveStatus(`Loaded`)
   }
 
   loadPortfolioRef.current = handleLoadPortfolio
@@ -728,6 +808,8 @@ export function PortfolioForm() {
     setOptimizerResult(null)
     setStressResult(null)
     setStressResultCacheKey(null)
+    setVarError(null)
+    setOptimizerError(null)
     setStressError(null)
     setStressPriceShocks({})
     setStressVolatilityPercent(100)
@@ -809,7 +891,11 @@ export function PortfolioForm() {
     )
 
     if (initialPortfolioId) {
-      void loadPortfolioRef.current(initialPortfolioId)
+      void loadPortfolioRef.current(initialPortfolioId).finally(() => {
+        hasCheckedInitialPortfolioRef.current = true
+      })
+    } else {
+      hasCheckedInitialPortfolioRef.current = true
     }
 
     return () => {
@@ -907,7 +993,7 @@ export function PortfolioForm() {
           }
 
           await refreshSavedPortfolios()
-          setSaveStatus(`Autosaved ${portfolio.name}.`)
+          setSaveStatus(`Autosaved`)
         } catch (err) {
           setSaveStatus(err instanceof Error ? err.message : "Autosave failed.")
         } finally {
@@ -962,72 +1048,19 @@ export function PortfolioForm() {
     ],
   )
 
-  const runStressTest = async (holdings: PortfolioRequest["holdings"]) => {
-    const request = buildStressTestRequest(holdings)
-    const requestKey = getAnalysisCacheKey("stress", request)
-
-    setIsStressLoading(true)
-    setStressError(null)
-
-    try {
-      const response = await fetch(apiUrl("stress-test"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(request),
-      })
-
-      if (!response.ok) {
-        throw new Error(await getErrorMessage(response))
+  const runVarAnalysis = useCallback(
+    async (holdings: PortfolioRequest["holdings"]) => {
+      const request: PortfolioRequest = {
+        holdings,
+        horizon,
+        confidence_level: confidenceLevel / 100,
+        n_simulations: nSimulations,
       }
 
-      const data = (await response.json()) as StressTestResult
-      await writeCachedAnalysisResponse("stress", request, data)
-      setStressResult(data)
-      setStressResultCacheKey(requestKey)
-    } catch (err) {
-      setStressError(
-        err instanceof Error ? err.message : "Failed to run stress test.",
-      )
-    } finally {
-      setIsStressLoading(false)
-    }
-  }
+      setIsVarLoading(true)
+      setVarError(null)
 
-  const handleSubmit = async (e: React.SubmitEvent) => {
-    e.preventDefault()
-    setError(null)
-
-    const holdings = buildHoldingsRequest()
-    if (!holdings) {
-      setError(
-        "Please add at least one valid portfolio entry with a ticker and quantity.",
-      )
-      return
-    }
-
-    if (analysisMode === "optimize" && holdings.length < 2) {
-      setError("Add at least two distinct tickers to run the optimizer.")
-      return
-    }
-
-    if (analysisMode === "stress") {
-      await runStressTest(holdings)
-      return
-    }
-
-    setIsLoading(true)
-
-    try {
-      if (analysisMode === "var") {
-        const request: PortfolioRequest = {
-          holdings,
-          horizon,
-          confidence_level: confidenceLevel / 100,
-          n_simulations: nSimulations,
-        }
-
+      try {
         const response = await fetch(apiUrl("analyze"), {
           method: "POST",
           headers: {
@@ -1046,7 +1079,6 @@ export function PortfolioForm() {
           data.var_positive ??
           Math.abs(data.var ?? data.var_amount ?? data.VaR ?? 0)
         const cvarAmount = data.cvar_positive ?? Math.abs(data.cvar ?? 0)
-
         const nextResult = {
           var_amount: varAmount,
           var_percentage:
@@ -1069,12 +1101,37 @@ export function PortfolioForm() {
 
         await writeCachedAnalysisResponse("var", request, nextResult)
         setResult(nextResult)
-      } else {
-        const request = {
-          holdings,
-          n_portfolios: parseInt(nPortfolios, 10),
-          risk_free_rate: DEFAULT_RISK_FREE_RATE,
-        }
+      } catch (err) {
+        setVarError(
+          err instanceof Error ? err.message : "Failed to analyze portfolio.",
+        )
+      } finally {
+        setIsVarLoading(false)
+      }
+    },
+    [confidenceLevel, horizon, nSimulations],
+  )
+
+  const runOptimization = useCallback(
+    async (holdings: PortfolioRequest["holdings"]) => {
+      if (holdings.length < 2) {
+        setOptimizerResult(null)
+        setOptimizerError(
+          "Add at least two distinct tickers to run the optimizer.",
+        )
+        return
+      }
+
+      const request = {
+        holdings,
+        n_portfolios: parseInt(nPortfolios, 10),
+        risk_free_rate: DEFAULT_RISK_FREE_RATE,
+      }
+
+      setIsOptimizerLoading(true)
+      setOptimizerError(null)
+
+      try {
         const response = await fetch(apiUrl("optimize"), {
           method: "POST",
           headers: {
@@ -1090,18 +1147,120 @@ export function PortfolioForm() {
         const data = (await response.json()) as OptimizerResult
         await writeCachedAnalysisResponse("optimize", request, data)
         setOptimizerResult(data)
+      } catch (err) {
+        setOptimizerError(
+          err instanceof Error ? err.message : "Failed to optimize portfolio.",
+        )
+      } finally {
+        setIsOptimizerLoading(false)
       }
-    } catch (err) {
+    },
+    [nPortfolios],
+  )
+
+  const runStressTest = useCallback(
+    async (holdings: PortfolioRequest["holdings"]) => {
+      const request = buildStressTestRequest(holdings)
+      const requestKey = getAnalysisCacheKey("stress", request)
+
+      setIsStressLoading(true)
+      setStressError(null)
+
+      try {
+        const response = await fetch(apiUrl("stress-test"), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(request),
+        })
+
+        if (!response.ok) {
+          throw new Error(await getErrorMessage(response))
+        }
+
+        const data = (await response.json()) as StressTestResult
+        await writeCachedAnalysisResponse("stress", request, data)
+        setStressResult(data)
+        setStressResultCacheKey(requestKey)
+      } catch (err) {
+        setStressError(
+          err instanceof Error ? err.message : "Failed to run stress test.",
+        )
+      } finally {
+        setIsStressLoading(false)
+      }
+    },
+    [buildStressTestRequest],
+  )
+
+  const runAllAnalyses = useCallback(
+    async (holdings: PortfolioRequest["holdings"] | null) => {
+      setError(null)
+
+      if (!holdings) {
+        setError(
+          "Please add at least one valid portfolio entry with a ticker and quantity.",
+        )
+        return
+      }
+
+      await Promise.all([
+        runVarAnalysis(holdings),
+        runStressTest(holdings),
+        runOptimization(holdings),
+      ])
+    },
+    [runOptimization, runStressTest, runVarAnalysis],
+  )
+
+  const getValidatedHoldings = () => {
+    const holdings = buildHoldingsRequest()
+    setError(null)
+
+    if (!holdings) {
       setError(
-        err instanceof Error
-          ? err.message
-          : analysisMode === "var"
-            ? "Failed to analyze portfolio."
-            : "Failed to optimize portfolio.",
+        "Please add at least one valid portfolio entry with a ticker and quantity.",
       )
-    } finally {
-      setIsLoading(false)
+      return null
     }
+
+    return holdings
+  }
+
+  const handleRunVarAnalysis = async () => {
+    const holdings = getValidatedHoldings()
+
+    if (!holdings) {
+      return
+    }
+
+    await runVarAnalysis(holdings)
+  }
+
+  const handleRunStressTest = async () => {
+    const holdings = getValidatedHoldings()
+
+    if (!holdings) {
+      return
+    }
+
+    await runStressTest(holdings)
+  }
+
+  const handleRunOptimization = async () => {
+    const holdings = getValidatedHoldings()
+
+    if (!holdings) {
+      return
+    }
+
+    await runOptimization(holdings)
+  }
+
+  const handleSubmit = async (e: React.SubmitEvent) => {
+    e.preventDefault()
+    await runAllAnalyses(buildHoldingsRequest())
   }
 
   const formatCurrency = (value: number) => {
@@ -1321,81 +1480,81 @@ export function PortfolioForm() {
   }
 
   useEffect(() => {
-    if (analysisMode === "var" && cachedVarRequest) {
-      let cancelled = false
-
-      void readCachedAnalysisResponse<VaRResult>("var", cachedVarRequest).then(
-        (cached) => {
-          if (!cancelled) {
-            setResult(cached?.response ?? null)
-          }
-        },
-      )
-
-      return () => {
-        cancelled = true
-      }
-    }
-
-    if (analysisMode === "optimize" && cachedOptimizerRequest) {
-      let cancelled = false
-
-      void readCachedAnalysisResponse<OptimizerResult>(
-        "optimize",
-        cachedOptimizerRequest,
-      ).then((cached) => {
-        if (!cancelled) {
-          setOptimizerResult(cached?.response ?? null)
-        }
-      })
-
-      return () => {
-        cancelled = true
-      }
-    }
-
-    if (analysisMode === "stress" && cachedStressRequest) {
-      let cancelled = false
-
-      void readCachedAnalysisResponse<StressTestResult>(
-        "stress",
-        cachedStressRequest,
-      ).then((cached) => {
-        if (cancelled) {
-          return
-        }
-
-        if (cached) {
-          setStressResult(cached.response)
-          setStressResultCacheKey(cachedStressRequestKey)
-        }
-      })
-
-      return () => {
-        cancelled = true
-      }
-    }
-
-    if (analysisMode === "var") {
+    if (!cachedVarRequest) {
       setResult(null)
+      return
     }
 
-    if (analysisMode === "optimize") {
+    let cancelled = false
+
+    void readCachedAnalysisResponse<VaRResult>("var", cachedVarRequest).then(
+      (cached) => {
+        if (!cancelled) {
+          setResult(cached?.response ?? null)
+          if (cached) {
+            setVarError(null)
+          }
+        }
+      },
+    )
+
+    return () => {
+      cancelled = true
+    }
+  }, [cachedVarRequest])
+
+  useEffect(() => {
+    if (!cachedOptimizerRequest) {
       setOptimizerResult(null)
+      return
     }
 
-    if (analysisMode === "stress") {
+    let cancelled = false
+
+    void readCachedAnalysisResponse<OptimizerResult>(
+      "optimize",
+      cachedOptimizerRequest,
+    ).then((cached) => {
+      if (!cancelled) {
+        setOptimizerResult(cached?.response ?? null)
+        if (cached) {
+          setOptimizerError(null)
+        }
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [cachedOptimizerRequest])
+
+  useEffect(() => {
+    if (!cachedStressRequest) {
       setStressResult(null)
       setStressResultCacheKey(null)
       setStressError(null)
+      return
     }
-  }, [
-    analysisMode,
-    cachedOptimizerRequest,
-    cachedStressRequest,
-    cachedStressRequestKey,
-    cachedVarRequest,
-  ])
+
+    let cancelled = false
+
+    void readCachedAnalysisResponse<StressTestResult>(
+      "stress",
+      cachedStressRequest,
+    ).then((cached) => {
+      if (cancelled || !cached) {
+        return
+      }
+
+      setStressResult(cached.response)
+      setStressResultCacheKey(cachedStressRequestKey)
+      setStressError(null)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [cachedStressRequest, cachedStressRequestKey])
 
   const isStressResultStale =
     Boolean(stressResult) &&
@@ -1403,203 +1562,277 @@ export function PortfolioForm() {
     stressResultCacheKey !== cachedStressRequestKey
 
   useEffect(() => {
-    if (analysisMode !== "stress" || stressHoldings.length > 0) {
+    if (stressHoldings.length > 0) {
       return
     }
 
     setStressResult(null)
     setStressResultCacheKey(null)
     setStressError(null)
-  }, [analysisMode, stressHoldings.length])
+  }, [stressHoldings.length])
+
+  useEffect(() => {
+    if (
+      hasSeededStarterPortfolioRef.current ||
+      !hasCheckedInitialPortfolioRef.current ||
+      selectedPortfolioId
+    ) {
+      return
+    }
+
+    const starterTickers = STARTER_PORTFOLIO_ALLOCATIONS.map(
+      (allocation) => allocation.ticker,
+    )
+    const isStarterShape =
+      entries.length === STARTER_PORTFOLIO_ALLOCATIONS.length &&
+      starterTickers.every((ticker) =>
+        entries.some((entry) => entry.ticker.toUpperCase().trim() === ticker),
+      )
+
+    if (!isStarterShape) {
+      return
+    }
+
+    const ready = STARTER_PORTFOLIO_ALLOCATIONS.every((allocation) => {
+      const entry = entries.find(
+        (item) => item.ticker.toUpperCase().trim() === allocation.ticker,
+      )
+
+      return typeof entry?.currentPrice === "number" && entry.currentPrice > 0
+    })
+
+    if (!ready) {
+      return
+    }
+
+    const nextEntries = entries.map((entry) => {
+      const allocation = STARTER_PORTFOLIO_ALLOCATIONS.find(
+        (item) => item.ticker === entry.ticker.toUpperCase().trim(),
+      )
+
+      if (!allocation || !entry.currentPrice) {
+        return entry
+      }
+
+      return {
+        ...entry,
+        quantity: Number(
+          (
+            (STARTER_PORTFOLIO_VALUE * allocation.weight) /
+            entry.currentPrice
+          ).toFixed(6),
+        ),
+      }
+    })
+    const starterHoldings = nextEntries
+      .map((entry) => ({
+        ticker: entry.ticker.toUpperCase().trim(),
+        quantity: entry.quantity,
+      }))
+      .filter((holding) => holding.ticker && holding.quantity > 0)
+
+    hasSeededStarterPortfolioRef.current = true
+    setEntries(nextEntries)
+    setPortfolioName(STARTER_PORTFOLIO_NAME)
+    setSaveStatus("Loaded starter 30/30/40 portfolio.")
+    void runAllAnalyses(starterHoldings)
+  }, [entries, runAllAnalyses, selectedPortfolioId])
+
+  const isAnyAnalysisLoading =
+    isVarLoading || isStressLoading || isOptimizerLoading
 
   return (
-    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(560px,0.95fr)_minmax(0,1.25fr)]">
-      <div className="space-y-6">
-        <Card className="bg-card/88">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5" />
-              Portfolio Holdings
-            </CardTitle>
-            <CardDescription>
-              Enter your portfolio positions with ticker symbols and quantities
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <Label htmlFor="portfolio-name">Active portfolio</Label>
-                    <Input
-                      id="portfolio-name"
-                      placeholder="Untitled portfolio"
-                      value={portfolioName}
-                      onChange={(event) => setPortfolioName(event.target.value)}
-                      className="max-w-md font-heading text-base"
-                    />
-                  </div>
+    <form onSubmit={handleSubmit} className="min-w-0 space-y-6">
+      <Card className="min-w-0 bg-card/88">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <TrendingUp className="h-5 w-5" />
+            Portfolio Holdings
+          </CardTitle>
+          <CardDescription>
+            Enter your portfolio positions with ticker symbols and quantities.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="min-w-0 space-y-6">
+          <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
+            <div className="grid gap-4 xl:grid-cols-[minmax(18rem,0.75fr)_minmax(0,1fr)_auto] xl:items-end">
+              <div className="min-w-0 space-y-2">
+                <Label htmlFor="portfolio-name">Active portfolio</Label>
+                <Input
+                  id="portfolio-name"
+                  placeholder="Untitled portfolio"
+                  value={portfolioName}
+                  onChange={(event) => setPortfolioName(event.target.value)}
+                  className="font-heading text-base"
+                />
+              </div>
 
-                  <div className="rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground lg:max-w-[15rem]">
-                    <p className="font-medium text-foreground">
-                      {selectedPortfolioId
-                        ? "Loaded portfolio"
-                        : "Draft portfolio"}
-                    </p>
-                    <p>
-                      {savedPortfolios.length.toLocaleString()} saved in the
-                      sidebar manager.
-                    </p>
-                  </div>
+              <div className="grid gap-2 rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground sm:grid-cols-3">
+                <div>
+                  <p className="font-medium text-foreground">
+                    {selectedPortfolioId ? "Loaded" : "Draft"}
+                  </p>
+                  <p className="truncate" title={portfolioName || "Untitled"}>
+                    {portfolioName || "Untitled portfolio"}
+                  </p>
                 </div>
-
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleNewPortfolio}
-                    className="w-full sm:w-28"
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    New
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void handleSavePortfolio()}
-                    disabled={isSaving}
-                    className="w-full sm:w-28"
-                  >
-                    {isSaving ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4 mr-2" />
-                    )}
-                    Save
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void handleDeletePortfolio()}
-                    disabled={!selectedPortfolioId}
-                    className="w-full sm:w-28"
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </Button>
+                <div>
+                  <p className="font-medium text-foreground">Saved</p>
+                  <p>{savedPortfolios.length.toLocaleString()} portfolios</p>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Status</p>
                   <div
-                    className="flex items-center gap-2 text-xs text-muted-foreground"
+                    className="flex min-w-0 items-center gap-2"
                     role="status"
                   >
                     {isAutosaving ? (
-                      <Loader2 className="size-3.5 animate-spin" />
+                      <Loader2 className="size-3.5 shrink-0 animate-spin" />
                     ) : (
-                      <span className="size-2 rounded-full bg-chart-3" />
+                      <span className="size-2 shrink-0 rounded-full bg-chart-3" />
                     )}
-                    <span>{isAutosaving ? "Autosaving" : "Autosave on"}</span>
+                    <span className="truncate">
+                      {isAutosaving
+                        ? "Autosaving"
+                        : saveStatus
+                          ? saveStatus
+                          : "Autosave on"}
+                    </span>
                   </div>
-                  {saveStatus && (
-                    <p className="text-sm text-muted-foreground" role="status">
-                      {saveStatus}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 sm:flex xl:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleNewPortfolio}
+                  className="w-full sm:w-28"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  New
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleSavePortfolio()}
+                  disabled={isSaving}
+                  className="w-full sm:w-28"
+                >
+                  {isSaving ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-2" />
+                  )}
+                  Save
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleDeletePortfolio()}
+                  disabled={!selectedPortfolioId}
+                  className="w-full sm:w-28"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 rounded-md border bg-background p-3 text-sm md:flex-row md:items-center md:justify-between">
+              <div className="flex items-start gap-3">
+                <Cloud className="mt-0.5 h-4 w-4 text-primary" />
+                <div className="space-y-1">
+                  <p className="font-medium">
+                    {user ? "Cloud sync enabled" : "Local-only by default"}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {user
+                      ? `Signed in as ${user.email ?? "your Supabase user"}.`
+                      : "Your portfolios stay in this browser unless you sign in."}
+                  </p>
+                  {(syncStatus || authError) && (
+                    <p
+                      className={
+                        authError ? "text-destructive" : "text-muted-foreground"
+                      }
+                      role={authError ? "alert" : "status"}
+                    >
+                      {authError ?? syncStatus}
                     </p>
                   )}
                 </div>
+              </div>
 
-                <div className="flex flex-col gap-3 rounded-md border bg-background p-3 text-sm md:flex-row md:items-center md:justify-between">
-                  <div className="flex items-start gap-3">
-                    <Cloud className="mt-0.5 h-4 w-4 text-primary" />
-                    <div className="space-y-1">
-                      <p className="font-medium">
-                        {user ? "Cloud sync enabled" : "Local-only by default"}
-                      </p>
-                      <p className="text-muted-foreground">
-                        {user
-                          ? `Signed in as ${user.email ?? "your Supabase user"}.`
-                          : "Your portfolios stay in this browser unless you sign in."}
-                      </p>
-                      {(syncStatus || authError) && (
-                        <p
-                          className={
-                            authError
-                              ? "text-destructive"
-                              : "text-muted-foreground"
-                          }
-                          role={authError ? "alert" : "status"}
-                        >
-                          {authError ?? syncStatus}
-                        </p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {user ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={isSyncing}
+                      onClick={() => void syncPortfolios()}
+                    >
+                      {isSyncing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
                       )}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    {user ? (
-                      <>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={isSyncing}
-                          onClick={() => void syncPortfolios()}
-                        >
-                          {isSyncing ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <RefreshCw className="h-4 w-4" />
-                          )}
-                          Sync now
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void handleSignOut()}
-                        >
-                          <LogOut className="h-4 w-4" />
-                          Sign out
-                        </Button>
-                      </>
-                    ) : (
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button type="button" variant="outline" size="sm">
-                            <LogIn className="h-4 w-4" />
-                            Sign in to sync
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Cloud sync</DialogTitle>
-                            <DialogDescription>
-                              Local portfolios remain private unless you sign
-                              in.
-                            </DialogDescription>
-                          </DialogHeader>
-                          <LoginForm
-                            error={authError}
-                            isLoading={isAuthLoading || isSigningIn}
-                            onGoogleSignIn={() => void handleGoogleSignIn()}
-                          />
-                        </DialogContent>
-                      </Dialog>
-                    )}
-                  </div>
-                </div>
+                      Sync now
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleSignOut()}
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Sign out
+                    </Button>
+                  </>
+                ) : (
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button type="button" variant="outline" size="sm">
+                        <LogIn className="h-4 w-4" />
+                        Sign in to sync
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Cloud sync</DialogTitle>
+                        <DialogDescription>
+                          Local portfolios remain private unless you sign in.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <LoginForm
+                        error={authError}
+                        isLoading={isAuthLoading || isSigningIn}
+                        onGoogleSignIn={() => void handleGoogleSignIn()}
+                      />
+                    </DialogContent>
+                  </Dialog>
+                )}
               </div>
+            </div>
+          </div>
 
-              <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-                <div className="flex items-start gap-2">
-                  <Info className="mt-0.5 size-4 text-primary" />
-                  <p>
-                    Use US-listed or USD-quoted holdings only. Mixed currencies
-                    make portfolio value and weights misleading.
-                  </p>
-                </div>
-              </div>
+          <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+            <div className="flex items-start gap-2">
+              <Info className="mt-0.5 size-4 text-primary" />
+              <p>
+                Use US-listed or USD-quoted holdings only. Mixed currencies make
+                portfolio value and weights misleading.
+              </p>
+            </div>
+          </div>
 
-              {/* Portfolio Entries */}
-              <div className="flex w-full flex-col gap-4">
-                <div className="hidden w-full grid-cols-[minmax(13rem,1.45fr)_minmax(4.5rem,0.45fr)_minmax(12rem,1fr)_minmax(4.25rem,0.4fr)_2.25rem] gap-2 text-sm font-medium text-muted-foreground md:grid">
+          {/* Portfolio Entries */}
+          <div className="flex min-w-0 w-full flex-col gap-4">
+            <div className="max-w-full min-w-0 overflow-x-auto pb-1">
+              <div className="min-w-[1040px] space-y-2">
+                <div className="grid w-full grid-cols-[minmax(16rem,1.8fr)_minmax(5rem,0.42fr)_minmax(9.5rem,0.6fr)_minmax(4.5rem,0.34fr)_minmax(7rem,0.5fr)_minmax(8rem,0.58fr)_minmax(7rem,0.5fr)_2.25rem] gap-2 text-sm font-medium text-muted-foreground">
                   <div>Security</div>
                   <div>Quantity</div>
                   <div className="flex items-center gap-1">
@@ -1615,6 +1848,9 @@ export function PortfolioForm() {
                     </Tooltip>
                   </div>
                   <div>Weight</div>
+                  <div>Market Value</div>
+                  <div>Day Move</div>
+                  <div>Day P&L</div>
                   <div />
                 </div>
 
@@ -1650,15 +1886,14 @@ export function PortfolioForm() {
                   return (
                     <div
                       key={entry.id}
-                      className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(13rem,1.45fr)_minmax(4.5rem,0.45fr)_minmax(12rem,1fr)_minmax(4.25rem,0.4fr)_2.25rem]"
+                      className="grid grid-cols-[minmax(16rem,1.8fr)_minmax(5rem,0.42fr)_minmax(9.5rem,0.6fr)_minmax(4.5rem,0.34fr)_minmax(7rem,0.5fr)_minmax(8rem,0.58fr)_minmax(7rem,0.5fr)_2.25rem] gap-2"
                     >
-                      <div className="space-y-1">
-                        <Label className="md:hidden">Security</Label>
+                      <div>
                         <InputGroup className="min-w-0 overflow-hidden">
                           {entry.companyName && (
                             <InputGroupAddon
                               align="inline-start"
-                              className="min-w-0 flex-1 justify-end border-r px-2 text-right text-xs font-normal"
+                              className="min-w-0 flex-1 justify-start border-r px-2 text-left text-xs font-normal"
                               title={[
                                 entry.companyName,
                                 entry.exchange,
@@ -1667,7 +1902,7 @@ export function PortfolioForm() {
                                 .filter(Boolean)
                                 .join(" - ")}
                             >
-                              <span className="block w-full truncate text-right">
+                              <span className="block w-full truncate text-left">
                                 {entry.companyName}
                               </span>
                             </InputGroupAddon>
@@ -1682,13 +1917,12 @@ export function PortfolioForm() {
                               )
                             }
                             className={`font-mono text-right uppercase md:px-2 ${
-                              entry.companyName ? "w-24 flex-none" : "flex-1"
+                              entry.companyName ? "w-18 flex-none" : "flex-1"
                             }`}
                           />
                         </InputGroup>
                       </div>
-                      <div className="space-y-1">
-                        <Label className="md:hidden">Quantity</Label>
+                      <div>
                         <Input
                           type="number"
                           placeholder="0"
@@ -1702,383 +1936,151 @@ export function PortfolioForm() {
                               parseFloat(e.target.value) || 0,
                             )
                           }
-                          className="md:px-2"
+                          className="px-2"
                         />
                       </div>
-                      <div className="space-y-1">
-                        <Label className="flex items-center gap-1 md:hidden">
-                          Current Price (USD)
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Info className="size-3.5 cursor-help" />
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              Latest USD quote. Prices refresh every{" "}
-                              {priceRefreshIntervalLabel}; change this in
-                              Settings.
-                            </TooltipContent>
-                          </Tooltip>
-                        </Label>
-                        <div
-                          className={`flex h-9 min-w-0 items-center rounded-md border bg-background px-2 text-sm shadow-xs ${
-                            entry.priceStatus === "error"
-                              ? "border-destructive"
-                              : "border-input"
+                      <div
+                        className={`flex h-9 min-w-0 items-center rounded-md border bg-background px-2 text-sm shadow-xs ${
+                          entry.priceStatus === "error"
+                            ? "border-destructive"
+                            : "border-input"
+                        }`}
+                        role="textbox"
+                        aria-readonly="true"
+                        aria-invalid={entry.priceStatus === "error"}
+                        title={priceStatus.title}
+                      >
+                        <span
+                          className={`min-w-0 flex-1 truncate tabular-nums ${
+                            entry.currentPrice === null &&
+                            entry.priceStatus !== "loading"
+                              ? "text-muted-foreground"
+                              : ""
                           }`}
-                          role="textbox"
-                          aria-readonly="true"
-                          aria-invalid={entry.priceStatus === "error"}
-                          title={priceStatus.title}
+                        >
+                          {priceValue}
+                        </span>
+                        <span className="mx-2 h-4 w-px shrink-0 bg-border" />
+                        <span
+                          className={`inline-flex max-w-20 shrink-0 items-center gap-1.5 truncate rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] ${priceStatusClass}`}
                         >
                           <span
-                            className={`min-w-0 flex-1 truncate tabular-nums ${
-                              entry.currentPrice === null &&
-                              entry.priceStatus !== "loading"
-                                ? "text-muted-foreground"
-                                : ""
-                            }`}
-                          >
-                            {priceValue}
-                          </span>
-                          <span className="mx-2 h-4 w-px shrink-0 bg-border" />
-                          <span
-                            className={`inline-flex max-w-20 shrink-0 items-center gap-1.5 truncate rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] ${priceStatusClass}`}
-                          >
-                            <span
-                              className={`size-1.5 shrink-0 rounded-full ${priceStatusDotClass}`}
-                            />
-                            <span className="truncate">
-                              {priceStatus.label}
-                            </span>
-                          </span>
-                        </div>
+                            className={`size-1.5 shrink-0 rounded-full ${priceStatusDotClass}`}
+                          />
+                          <span className="truncate">{priceStatus.label}</span>
+                        </span>
                       </div>
-                      <div className="space-y-1">
-                        <Label className="md:hidden">Weight</Label>
-                        <div className="flex h-9 items-center rounded-md border bg-background px-2 text-sm tabular-nums">
-                          {getEntryWeightLabel(entry.id)}
-                        </div>
-                      </div>
-                      <div className="flex items-end">
+                      <Input
+                        readOnly
+                        value={getEntryWeightLabel(entry.id)}
+                        aria-label={`${entry.ticker || "Holding"} weight`}
+                        className="px-2 text-sm tabular-nums"
+                      />
+                      <Input
+                        readOnly
+                        value={
+                          marketValue !== null
+                            ? formatCurrency(marketValue)
+                            : "-"
+                        }
+                        aria-label={`${entry.ticker || "Holding"} market value`}
+                        className="px-2 text-sm tabular-nums"
+                      />
+                      <Input
+                        readOnly
+                        value={
+                          dayChange
+                            ? `${formatSignedCurrency(dayChange.amount)} (${formatSignedPercent(dayChange.percent)})`
+                            : "-"
+                        }
+                        aria-label={`${entry.ticker || "Holding"} day move`}
+                        className={`px-2 text-sm tabular-nums ${dayChangeClass}`}
+                      />
+                      <Input
+                        readOnly
+                        value={
+                          dayChange ? formatSignedCurrency(dayChange.pnl) : "-"
+                        }
+                        aria-label={`${entry.ticker || "Holding"} day P&L`}
+                        className={`px-2 text-sm tabular-nums ${dayChangeClass}`}
+                      />
+                      <div className="flex items-center">
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
                           onClick={() => removeEntry(entry.id)}
                           disabled={entries.length === 1}
-                          className="w-full md:w-9"
+                          className="w-full"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
-                      {(marketValue !== null || dayChange !== null) && (
-                        <div className="grid grid-cols-1 gap-2 rounded-md border bg-background/70 px-2 py-2 text-xs md:col-span-5 sm:grid-cols-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-muted-foreground">
-                              Market value
-                            </span>
-                            <span className="font-mono font-medium tabular-nums">
-                              {marketValue !== null
-                                ? formatCurrency(marketValue)
-                                : "-"}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-muted-foreground">
-                              Day move
-                            </span>
-                            <span
-                              className={`font-mono font-medium tabular-nums ${dayChangeClass}`}
-                            >
-                              {dayChange
-                                ? `${formatSignedCurrency(dayChange.amount)} (${formatSignedPercent(dayChange.percent)})`
-                                : "-"}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-muted-foreground">
-                              Day P&L
-                            </span>
-                            <span
-                              className={`font-mono font-medium tabular-nums ${dayChangeClass}`}
-                            >
-                              {dayChange
-                                ? formatSignedCurrency(dayChange.pnl)
-                                : "-"}
-                            </span>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )
                 })}
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={addEntry}
-                  className="w-full"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Position
-                </Button>
               </div>
+            </div>
 
-              {/* Portfolio Summary */}
-              <div className="rounded-lg bg-muted p-4">
-                <div className="mt-1 flex justify-between text-sm font-bold">
-                  <span>Total Quantity</span>
-                  <span>{totalQuantity.toLocaleString()}</span>
-                </div>
-                <div className="mt-1 flex justify-between text-lg font-bold">
-                  <span className="flex items-center gap-1">
-                    Estimated Position Value
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Info className="size-3.5 cursor-help text-muted-foreground" />
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Estimated in USD from loaded current prices.
-                      </TooltipContent>
-                    </Tooltip>
-                  </span>
-                  <span>{formatCurrency(estimatedPortfolioValue)}</span>
-                </div>
-              </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={addEntry}
+              className="w-full"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Position
+            </Button>
+          </div>
 
-              <div className="space-y-3">
-                <Label>Analysis Mode</Label>
-                <Tabs
-                  value={analysisMode}
-                  onValueChange={(value) => {
-                    setError(null)
-                    setAnalysisMode(
-                      value === "optimize"
-                        ? "optimize"
-                        : value === "stress"
-                          ? "stress"
-                          : "var",
-                    )
-                  }}
-                >
-                  <TabsList className="grid w-full grid-cols-3">
-                    <TabsTrigger value="var">VaR</TabsTrigger>
-                    <TabsTrigger value="stress">Stress Test</TabsTrigger>
-                    <TabsTrigger value="optimize">
-                      Efficient frontier
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
-              </div>
+          {/* Portfolio Summary */}
+          <div className="rounded-lg bg-muted p-4">
+            <div className="mt-1 flex justify-between text-sm font-bold">
+              <span>Total Quantity</span>
+              <span>{totalQuantity.toLocaleString()}</span>
+            </div>
+            <div className="mt-1 flex justify-between text-lg font-bold">
+              <span className="flex items-center gap-1">
+                Estimated Position Value
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="size-3.5 cursor-help text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Estimated in USD from loaded current prices.
+                  </TooltipContent>
+                </Tooltip>
+              </span>
+              <span>{formatCurrency(estimatedPortfolioValue)}</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-              {analysisMode !== "optimize" ? (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="confidence">Confidence Level</Label>
-                    <Select
-                      value={confidenceLevel.toString()}
-                      onValueChange={(v) => setConfidenceLevel(parseInt(v))}
-                    >
-                      <SelectTrigger id="confidence" className="w-full">
-                        <SelectValue placeholder="Select confidence" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="90">90%</SelectItem>
-                        <SelectItem value="95">95%</SelectItem>
-                        <SelectItem value="99">99%</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+      <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="font-heading text-2xl font-semibold">Analyses</h2>
+            <p className="text-sm text-muted-foreground">
+              Tune the inputs on the left and review each matching output on the
+              right.
+            </p>
+          </div>
+          <Button type="submit" disabled={isAnyAnalysisLoading}>
+            {isAnyAnalysisLoading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Updating Analyses...
+              </>
+            ) : (
+              <>
+                <TrendingUp className="mr-2 h-4 w-4" />
+                Run All Analyses
+              </>
+            )}
+          </Button>
+        </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="horizon">Time Horizon</Label>
-                    <Select
-                      value={horizon.toString()}
-                      onValueChange={(v) => setHorizon(parseInt(v))}
-                    >
-                      <SelectTrigger id="horizon" className="w-full">
-                        <SelectValue placeholder="Select horizon" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="1">1 Day</SelectItem>
-                        <SelectItem value="5">5 Days (1 Week)</SelectItem>
-                        <SelectItem value="22">22 Days (1 Month)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="simulations">
-                      Number of Monte Carlo Simulations
-                    </Label>
-                    <Select
-                      value={nSimulations.toString()}
-                      onValueChange={(v) => setNSimulations(parseInt(v))}
-                    >
-                      <SelectTrigger id="simulations" className="w-full">
-                        <SelectValue placeholder="Select simulations" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="1000">1,000</SelectItem>
-                        <SelectItem value="10000">10,000</SelectItem>
-                        <SelectItem value="50000">50,000</SelectItem>
-                        <SelectItem value="100000">100,000</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="n-portfolios">Simulated Portfolios</Label>
-                    <Select
-                      value={nPortfolios}
-                      onValueChange={(v) => setNPortfolios(v)}
-                    >
-                      <SelectTrigger id="n-portfolios" className="w-full">
-                        <SelectValue placeholder="Select simulations" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="500">500</SelectItem>
-                        <SelectItem value="1000">1,000</SelectItem>
-                        <SelectItem value="5000">5,000</SelectItem>
-                        <SelectItem value="10000">10,000</SelectItem>
-                        <SelectItem value="50000">50,000</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <p className="text-xs text-muted-foreground">
-                    Optimization needs at least two distinct tickers.{" "}
-                  </p>
-                </div>
-              )}
-
-              {analysisMode === "stress" && (
-                <div className="space-y-5 rounded-lg border bg-muted/30 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Gauge className="size-4 text-primary" />
-                      <p className="font-medium">Stress Scenario</p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setStressPriceShocks({})
-                        setStressVolatilityPercent(100)
-                      }}
-                    >
-                      Reset
-                    </Button>
-                  </div>
-
-                  <div className="space-y-4">
-                    {stressHoldings.length > 0 ? (
-                      stressHoldings.map((holding) => {
-                        const shockValue =
-                          stressPriceShocks[holding.ticker] ?? 0
-
-                        return (
-                          <div key={holding.ticker} className="space-y-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <Label htmlFor={`shock-${holding.ticker}`}>
-                                {holding.ticker} price shock
-                              </Label>
-                              <span className="font-mono text-sm tabular-nums">
-                                {shockValue > 0 ? "+" : ""}
-                                {shockValue}%
-                              </span>
-                            </div>
-                            <Slider
-                              id={`shock-${holding.ticker}`}
-                              min={-80}
-                              max={80}
-                              step={1}
-                              value={[shockValue]}
-                              onValueChange={(value) =>
-                                updateStressPriceShock(
-                                  holding.ticker,
-                                  value[0] ?? 0,
-                                )
-                              }
-                            />
-                          </div>
-                        )
-                      })
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        Add at least one ticker and quantity to run a stress
-                        test.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="space-y-3 border-t pt-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <Label htmlFor="stress-volatility">
-                        Global volatility multiplier
-                      </Label>
-                      <span className="font-mono text-sm tabular-nums">
-                        {(stressVolatilityPercent / 100).toFixed(2)}x
-                      </span>
-                    </div>
-                    <Slider
-                      id="stress-volatility"
-                      min={25}
-                      max={500}
-                      step={5}
-                      value={[stressVolatilityPercent]}
-                      onValueChange={(value) =>
-                        setStressVolatilityPercent(value[0] ?? 100)
-                      }
-                    />
-                  </div>
-
-                  <p className="text-xs text-muted-foreground">
-                    Adjust shocks, then run the stress test to update cached
-                    baseline and shocked outputs.
-                  </p>
-                </div>
-              )}
-
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={
-                  analysisMode === "stress" ? isStressLoading : isLoading
-                }
-              >
-                {analysisMode === "stress" && isStressLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Updating Stress Test...
-                  </>
-                ) : analysisMode !== "stress" && isLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {analysisMode === "var"
-                      ? "Analyzing Portfolio..."
-                      : "Optimizing Portfolio..."}
-                  </>
-                ) : (
-                  <>
-                    <TrendingUp className="mr-2 h-4 w-4" />
-                    {analysisMode === "var"
-                      ? "Calculate VaR"
-                      : analysisMode === "stress"
-                        ? "Run Stress Test"
-                        : "Run Optimization"}
-                  </>
-                )}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="space-y-6">
         {/* Error Display */}
         {error && (
           <Card className="border-destructive">
@@ -2091,223 +2093,517 @@ export function PortfolioForm() {
           </Card>
         )}
 
-        {analysisMode === "stress" && stressError && (
-          <Card className="border-destructive">
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-2 text-destructive">
-                <AlertTriangle className="h-5 w-5" />
-                <p>{stressError}</p>
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(260px,0.42fr)_minmax(0,1.58fr)] xl:items-start">
+          <Card className="bg-card/88">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-chart-1" />
+                VaR Settings
+              </CardTitle>
+              <CardDescription>
+                Configure the loss horizon and simulation count.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-3 xl:grid-cols-1">
+              <div className="space-y-2">
+                <Label htmlFor="confidence">Confidence Level</Label>
+                <Select
+                  value={normalizeConfidenceLevel(confidenceLevel).toString()}
+                  onValueChange={(v) =>
+                    setConfidenceLevel(
+                      normalizeConfidenceLevel(parseInt(v, 10)),
+                    )
+                  }
+                >
+                  <SelectTrigger id="confidence" className="w-full">
+                    <SelectValue placeholder="Select confidence" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="90">90%</SelectItem>
+                    <SelectItem value="95">95%</SelectItem>
+                    <SelectItem value="99">99%</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="horizon">Time Horizon</Label>
+                <Select
+                  value={horizon.toString()}
+                  onValueChange={(v) => setHorizon(parseInt(v))}
+                >
+                  <SelectTrigger id="horizon" className="w-full">
+                    <SelectValue placeholder="Select horizon" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1 Day</SelectItem>
+                    <SelectItem value="5">5 Days (1 Week)</SelectItem>
+                    <SelectItem value="22">22 Days (1 Month)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="simulations">VaR Simulations</Label>
+                <Select
+                  value={nSimulations.toString()}
+                  onValueChange={(v) => setNSimulations(parseInt(v))}
+                >
+                  <SelectTrigger id="simulations" className="w-full">
+                    <SelectValue placeholder="Select simulations" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1000">1,000</SelectItem>
+                    <SelectItem value="10000">10,000</SelectItem>
+                    <SelectItem value="50000">50,000</SelectItem>
+                    <SelectItem value="100000">100,000</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                type="button"
+                onClick={() => void handleRunVarAnalysis()}
+                disabled={isVarLoading}
+                className="sm:col-span-3 xl:col-span-1"
+              >
+                {isVarLoading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <AlertTriangle className="mr-2 h-4 w-4" />
+                )}
+                Run VaR
+              </Button>
             </CardContent>
           </Card>
-        )}
 
-        {analysisMode === "stress" && stressHoldings.length > 0 && (
-          <StressTestResults
-            result={stressResult}
-            isLoading={isStressLoading}
-            isStale={isStressResultStale}
-          />
-        )}
+          <div className="space-y-3">
+            {varError && (
+              <Card className="border-destructive">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-2 text-destructive">
+                    <AlertTriangle className="h-5 w-5" />
+                    <p>{varError}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
-        {analysisMode === "var" && result && (
-          <Card className="border-chart-1">
+            {result ? (
+              <Card className="border-chart-1">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-chart-1">
+                    <AlertTriangle className="h-5 w-5" />
+                    Value at Risk Analysis
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="rounded-lg bg-muted p-4">
+                      <p className="text-sm text-muted-foreground">
+                        Value at Risk
+                      </p>
+                      <p className="text-2xl font-bold text-chart-1">
+                        {formatCurrency(result.var_amount)}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {result.var_percentage.toFixed(2)}% of portfolio
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted p-4">
+                      <p className="text-sm text-muted-foreground">
+                        Expected Shortfall
+                      </p>
+                      <p className="text-2xl font-bold text-chart-1">
+                        {formatCurrency(result.cvar_amount)}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {result.cvar_percentage.toFixed(2)}% of portfolio
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 rounded-lg bg-secondary p-4">
+                    <p className="font-semibold">What does this mean?</p>
+                    <p className="text-lg">
+                      You have a{" "}
+                      <span className="font-bold text-chart-1">
+                        {(100 - result.confidence_level).toFixed(0)}%
+                      </span>{" "}
+                      chance of losing at least{" "}
+                      <span className="font-bold text-chart-1">
+                        {formatCurrency(result.var_amount)}
+                      </span>{" "}
+                      over the next {getHorizonLabel(result.horizon)}, which
+                      represents{" "}
+                      <span className="font-bold text-chart-1">
+                        {result.var_percentage.toFixed(2)}%
+                      </span>{" "}
+                      of your{" "}
+                      <span className="font-medium">
+                        {formatCurrency(result.portfolio_value)}
+                      </span>{" "}
+                      portfolio.
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      If returns land in the worst{" "}
+                      {(100 - result.confidence_level).toFixed(0)}% of simulated
+                      outcomes, the average loss is{" "}
+                      <span className="font-medium text-foreground">
+                        {formatCurrency(result.cvar_amount)}
+                      </span>
+                      .
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    <div className="rounded-lg bg-muted p-3">
+                      <p className="text-xs text-muted-foreground">
+                        Expected P&L
+                      </p>
+                      <p className="text-lg font-semibold">
+                        {formatSignedCurrency(result.mean_pnl)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted p-3">
+                      <p className="text-xs text-muted-foreground">Best Case</p>
+                      <p className="text-lg font-semibold text-chart-1">
+                        {formatSignedCurrency(result.best_case)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted p-3">
+                      <p className="text-xs text-muted-foreground">
+                        Worst Case
+                      </p>
+                      <p className="text-lg font-semibold text-destructive">
+                        {formatSignedCurrency(result.worst_case)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted p-3">
+                      <p className="text-xs text-muted-foreground">
+                        P&L Std. Dev.
+                      </p>
+                      <p className="text-lg font-semibold">
+                        {formatCurrency(result.std_pnl)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted p-3">
+                      <p className="text-xs text-muted-foreground">P&L Range</p>
+                      <p className="text-lg font-semibold">
+                        {formatSignedCurrency(result.worst_case)} to{" "}
+                        {formatSignedCurrency(result.best_case)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {result.holdings.length > 0 && (
+                    <MonteCarloSimulationChart
+                      holdings={result.holdings.map((holding) => ({
+                        ticker: holding.ticker,
+                        quantity: holding.quantity,
+                      }))}
+                      initialHorizon={result.horizon}
+                    />
+                  )}
+
+                  <div className="text-sm text-muted-foreground">
+                    <p className="mb-1 font-medium">Technical Details:</p>
+                    <ul className="list-inside list-disc space-y-1">
+                      <li>Confidence Level: {result.confidence_level}%</li>
+                      <li>Time Horizon: {getHorizonLabel(result.horizon)}</li>
+                      <li>
+                        Portfolio Value:{" "}
+                        {formatCurrency(result.portfolio_value)}
+                      </li>
+                      <li>
+                        Monte Carlo Simulations:{" "}
+                        {result.n_simulations.toLocaleString()}
+                      </li>
+                    </ul>
+                  </div>
+
+                  {result.holdings.length > 0 && (
+                    <div className="text-sm">
+                      <p className="mb-2 font-medium">Calculated Holdings:</p>
+                      <div className="space-y-2">
+                        {result.holdings.map((holding) => (
+                          <div
+                            key={holding.ticker}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2"
+                          >
+                            <span className="font-medium">
+                              {holding.ticker}
+                            </span>
+                            <span className="text-muted-foreground">
+                              {holding.quantity.toLocaleString()} shares at{" "}
+                              {formatCurrency(holding.latest_price)}
+                            </span>
+                            <span>
+                              {(holding.weight * 100).toFixed(2)}% /{" "}
+                              {formatCurrency(holding.market_value)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <Accordion
+                    type="single"
+                    collapsible
+                    className="rounded-lg border px-4"
+                  >
+                    <AccordionItem value="glossary">
+                      <AccordionTrigger>Key Terms</AccordionTrigger>
+                      <AccordionContent className="space-y-3 text-muted-foreground">
+                        <p>
+                          <span className="font-medium text-foreground">
+                            Value at Risk:
+                          </span>{" "}
+                          A threshold loss. At {result.confidence_level}%
+                          confidence, losses should be less than this amount in
+                          most comparable periods.
+                        </p>
+                        <p>
+                          <span className="font-medium text-foreground">
+                            CVaR / Expected Shortfall:
+                          </span>{" "}
+                          The average loss in the worst simulated tail outcomes.
+                        </p>
+                        <p>
+                          <span className="font-medium text-foreground">
+                            Monte Carlo Simulation:
+                          </span>{" "}
+                          A method that runs many possible portfolio outcomes
+                          using historical return behavior and random shocks.
+                        </p>
+                        <p>
+                          <span className="font-medium text-foreground">
+                            Portfolio Value:
+                          </span>{" "}
+                          The current market value of your holdings, calculated
+                          from latest prices and quantities.
+                        </p>
+                        <Button asChild variant="outline" size="sm">
+                          <Link href="/glossary">Open full glossary</Link>
+                        </Button>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
+                </CardContent>
+              </Card>
+            ) : (
+              <AnalysisPlaceholderCard
+                title="Value at Risk Analysis"
+                isActive={isVarLoading}
+                description={
+                  isVarLoading
+                    ? "Updating VaR analysis..."
+                    : "No VaR analysis yet. Run all analyses to populate this panel."
+                }
+              />
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(260px,0.42fr)_minmax(0,1.58fr)] xl:items-start">
+          <Card className="bg-card/88">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-chart-1">
-                <AlertTriangle className="h-5 w-5" />
-                Value at Risk Analysis
+              <CardTitle className="flex items-center gap-2">
+                <Gauge className="size-5 text-primary" />
+                Stress Scenario
               </CardTitle>
+              <CardDescription>
+                Apply holding-level price shocks and a portfolio volatility
+                multiplier.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setStressPriceShocks({})
+                    setStressVolatilityPercent(100)
+                  }}
+                >
+                  Reset
+                </Button>
+              </div>
+
+              <div className="space-y-4">
+                {stressHoldings.length > 0 ? (
+                  stressHoldings.map((holding) => {
+                    const shockValue = stressPriceShocks[holding.ticker] ?? 0
+
+                    return (
+                      <div key={holding.ticker} className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <Label htmlFor={`shock-${holding.ticker}`}>
+                            {holding.ticker} price shock
+                          </Label>
+                          <span className="font-mono text-sm tabular-nums">
+                            {shockValue > 0 ? "+" : ""}
+                            {shockValue}%
+                          </span>
+                        </div>
+                        <Slider
+                          id={`shock-${holding.ticker}`}
+                          min={-80}
+                          max={80}
+                          step={1}
+                          value={[shockValue]}
+                          onValueChange={(value) =>
+                            updateStressPriceShock(
+                              holding.ticker,
+                              value[0] ?? 0,
+                            )
+                          }
+                        />
+                      </div>
+                    )
+                  })
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Add at least one ticker and quantity to run a stress test.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="stress-volatility">
+                    Global volatility multiplier
+                  </Label>
+                  <span className="font-mono text-sm tabular-nums">
+                    {(stressVolatilityPercent / 100).toFixed(2)}x
+                  </span>
+                </div>
+                <Slider
+                  id="stress-volatility"
+                  min={25}
+                  max={500}
+                  step={5}
+                  value={[stressVolatilityPercent]}
+                  onValueChange={(value) =>
+                    setStressVolatilityPercent(value[0] ?? 100)
+                  }
+                />
+              </div>
+              <Button
+                type="button"
+                onClick={() => void handleRunStressTest()}
+                disabled={isStressLoading}
+                className="w-full"
+              >
+                {isStressLoading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Gauge className="mr-2 h-4 w-4" />
+                )}
+                Run Stress Test
+              </Button>
+            </CardContent>
+          </Card>
+
+          <div className="space-y-3">
+            {stressError && (
+              <Card className="border-destructive">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-2 text-destructive">
+                    <AlertTriangle className="h-5 w-5" />
+                    <p>{stressError}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <StressTestResults
+              result={stressResult}
+              isLoading={isStressLoading}
+              isStale={isStressResultStale}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(260px,0.42fr)_minmax(0,1.58fr)] xl:items-start">
+          <Card className="bg-card/88">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-primary" />
+                Optimizer Settings
+              </CardTitle>
+              <CardDescription>
+                Control how many random portfolios feed the efficient frontier.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="rounded-lg bg-muted p-4">
-                  <p className="text-sm text-muted-foreground">Value at Risk</p>
-                  <p className="text-2xl font-bold text-chart-1">
-                    {formatCurrency(result.var_amount)}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {result.var_percentage.toFixed(2)}% of portfolio
-                  </p>
-                </div>
-                <div className="rounded-lg bg-muted p-4">
-                  <p className="text-sm text-muted-foreground">
-                    Expected Shortfall
-                  </p>
-                  <p className="text-2xl font-bold text-chart-1">
-                    {formatCurrency(result.cvar_amount)}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {result.cvar_percentage.toFixed(2)}% of portfolio
-                  </p>
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="n-portfolios">Optimizer Portfolios</Label>
+                <Select
+                  value={nPortfolios}
+                  onValueChange={(v) => setNPortfolios(v)}
+                >
+                  <SelectTrigger id="n-portfolios" className="w-full">
+                    <SelectValue placeholder="Select portfolios" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="500">500</SelectItem>
+                    <SelectItem value="1000">1,000</SelectItem>
+                    <SelectItem value="5000">5,000</SelectItem>
+                    <SelectItem value="10000">10,000</SelectItem>
+                    <SelectItem value="50000">50,000</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-
-              <div className="rounded-lg bg-secondary p-4 space-y-2">
-                <p className="font-semibold">What does this mean?</p>
-                <p className="text-lg">
-                  You have a{" "}
-                  <span className="font-bold text-chart-1">
-                    {(100 - result.confidence_level).toFixed(0)}%
-                  </span>{" "}
-                  chance of losing at least{" "}
-                  <span className="font-bold text-chart-1">
-                    {formatCurrency(result.var_amount)}
-                  </span>{" "}
-                  over the next {getHorizonLabel(result.horizon)}, which
-                  represents{" "}
-                  <span className="font-bold text-chart-1">
-                    {result.var_percentage.toFixed(2)}%
-                  </span>{" "}
-                  of your{" "}
-                  <span className="font-medium">
-                    {formatCurrency(result.portfolio_value)}
-                  </span>{" "}
-                  portfolio.
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  If returns land in the worst{" "}
-                  {(100 - result.confidence_level).toFixed(0)}% of simulated
-                  outcomes, the average loss is{" "}
-                  <span className="font-medium text-foreground">
-                    {formatCurrency(result.cvar_amount)}
-                  </span>
-                  .
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                <div className="rounded-lg bg-muted p-3">
-                  <p className="text-xs text-muted-foreground">Expected P&L</p>
-                  <p className="text-lg font-semibold">
-                    {formatSignedCurrency(result.mean_pnl)}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-muted p-3">
-                  <p className="text-xs text-muted-foreground">Best Case</p>
-                  <p className="text-lg font-semibold text-chart-1">
-                    {formatSignedCurrency(result.best_case)}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-muted p-3">
-                  <p className="text-xs text-muted-foreground">Worst Case</p>
-                  <p className="text-lg font-semibold text-destructive">
-                    {formatSignedCurrency(result.worst_case)}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-muted p-3">
-                  <p className="text-xs text-muted-foreground">P&L Std. Dev.</p>
-                  <p className="text-lg font-semibold">
-                    {formatCurrency(result.std_pnl)}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-muted p-3">
-                  <p className="text-xs text-muted-foreground">P&L Range</p>
-                  <p className="text-lg font-semibold">
-                    {formatSignedCurrency(result.worst_case)} to{" "}
-                    {formatSignedCurrency(result.best_case)}
-                  </p>
-                </div>
-              </div>
-
-              {result.holdings.length > 0 && (
-                <MonteCarloSimulationChart
-                  holdings={result.holdings.map((holding) => ({
-                    ticker: holding.ticker,
-                    quantity: holding.quantity,
-                  }))}
-                  initialHorizon={result.horizon}
-                />
-              )}
-
-              <div className="text-sm text-muted-foreground">
-                <p className="font-medium mb-1">Technical Details:</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li>Confidence Level: {result.confidence_level}%</li>
-                  <li>Time Horizon: {getHorizonLabel(result.horizon)}</li>
-                  <li>
-                    Portfolio Value: {formatCurrency(result.portfolio_value)}
-                  </li>
-                  <li>
-                    Monte Carlo Simulations:{" "}
-                    {result.n_simulations.toLocaleString()}
-                  </li>
-                </ul>
-              </div>
-
-              {result.holdings.length > 0 && (
-                <div className="text-sm">
-                  <p className="font-medium mb-2">Calculated Holdings:</p>
-                  <div className="space-y-2">
-                    {result.holdings.map((holding) => (
-                      <div
-                        key={holding.ticker}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2"
-                      >
-                        <span className="font-medium">{holding.ticker}</span>
-                        <span className="text-muted-foreground">
-                          {holding.quantity.toLocaleString()} shares at{" "}
-                          {formatCurrency(holding.latest_price)}
-                        </span>
-                        <span>
-                          {(holding.weight * 100).toFixed(2)}% /{" "}
-                          {formatCurrency(holding.market_value)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <Accordion
-                type="single"
-                collapsible
-                className="rounded-lg border px-4"
+              <p className="text-xs text-muted-foreground">
+                Optimization needs at least two distinct tickers.
+              </p>
+              <Button
+                type="button"
+                onClick={() => void handleRunOptimization()}
+                disabled={isOptimizerLoading}
+                className="w-full"
               >
-                <AccordionItem value="glossary">
-                  <AccordionTrigger>Key Terms</AccordionTrigger>
-                  <AccordionContent className="space-y-3 text-muted-foreground">
-                    <p>
-                      <span className="font-medium text-foreground">
-                        Value at Risk:
-                      </span>{" "}
-                      A threshold loss. At {result.confidence_level}%
-                      confidence, losses should be less than this amount in most
-                      comparable periods.
-                    </p>
-                    <p>
-                      <span className="font-medium text-foreground">
-                        CVaR / Expected Shortfall:
-                      </span>{" "}
-                      The average loss in the worst simulated tail outcomes.
-                    </p>
-                    <p>
-                      <span className="font-medium text-foreground">
-                        Monte Carlo Simulation:
-                      </span>{" "}
-                      A method that runs many possible portfolio outcomes using
-                      historical return behavior and random shocks.
-                    </p>
-                    <p>
-                      <span className="font-medium text-foreground">
-                        Portfolio Value:
-                      </span>{" "}
-                      The current market value of your holdings, calculated from
-                      latest prices and quantities.
-                    </p>
-                    <Button asChild variant="outline" size="sm">
-                      <Link href="/glossary">Open full glossary</Link>
-                    </Button>
-                  </AccordionContent>
-                </AccordionItem>
-              </Accordion>
+                {isOptimizerLoading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <TrendingUp className="mr-2 h-4 w-4" />
+                )}
+                Run Optimizer
+              </Button>
             </CardContent>
           </Card>
-        )}
 
-        {analysisMode === "optimize" && optimizerResult && (
-          <OptimizerResults result={optimizerResult} />
-        )}
+          <div className="space-y-3">
+            {optimizerError && (
+              <Card className="border-destructive">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-2 text-destructive">
+                    <AlertTriangle className="h-5 w-5" />
+                    <p>{optimizerError}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {optimizerResult ? (
+              <OptimizerResults result={optimizerResult} />
+            ) : (
+              <AnalysisPlaceholderCard
+                title="Efficient Frontier"
+                isActive={isOptimizerLoading}
+                description={
+                  isOptimizerLoading
+                    ? "Updating optimizer..."
+                    : "No optimizer output yet. Run all analyses to populate this panel."
+                }
+              />
+            )}
+          </div>
+        </div>
       </div>
-    </div>
+    </form>
   )
 }
