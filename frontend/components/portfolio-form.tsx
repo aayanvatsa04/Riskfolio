@@ -1830,9 +1830,9 @@ export function PortfolioForm() {
 
           {/* Portfolio Entries */}
           <div className="flex min-w-0 w-full flex-col gap-4">
-            <div className="max-w-full min-w-0 overflow-x-auto pb-1">
-              <div className="min-w-[1040px] space-y-2">
-                <div className="grid w-full grid-cols-[minmax(16rem,1.8fr)_minmax(5rem,0.42fr)_minmax(9.5rem,0.6fr)_minmax(4.5rem,0.34fr)_minmax(7rem,0.5fr)_minmax(8rem,0.58fr)_minmax(7rem,0.5fr)_2.25rem] gap-2 text-sm font-medium text-muted-foreground">
+            <div className="max-w-full min-w-0 overflow-hidden pb-1">
+              <div className="min-w-0 space-y-2">
+                <div className="grid w-full grid-cols-[10.5rem_4.5rem_11.25rem_4rem_6rem_6.5rem_6rem_2rem] gap-2 text-sm font-medium text-muted-foreground">
                   <div>Security</div>
                   <div>Quantity</div>
                   <div className="flex items-center gap-1">
@@ -1886,14 +1886,14 @@ export function PortfolioForm() {
                   return (
                     <div
                       key={entry.id}
-                      className="grid grid-cols-[minmax(16rem,1.8fr)_minmax(5rem,0.42fr)_minmax(9.5rem,0.6fr)_minmax(4.5rem,0.34fr)_minmax(7rem,0.5fr)_minmax(8rem,0.58fr)_minmax(7rem,0.5fr)_2.25rem] gap-2"
+                      className="grid grid-cols-[10.5rem_4.5rem_11.25rem_4rem_6rem_6.5rem_6rem_2rem] gap-2"
                     >
                       <div>
                         <InputGroup className="min-w-0 overflow-hidden">
                           {entry.companyName && (
                             <InputGroupAddon
                               align="inline-start"
-                              className="min-w-0 flex-1 justify-start border-r px-2 text-left text-xs font-normal"
+                              className="min-w-0 max-w-[5.5rem] flex-none justify-start border-r px-2 text-left text-xs font-normal"
                               title={[
                                 entry.companyName,
                                 entry.exchange,
@@ -1916,8 +1916,10 @@ export function PortfolioForm() {
                                 e.target.value.toUpperCase(),
                               )
                             }
-                            className={`font-mono text-right uppercase md:px-2 ${
-                              entry.companyName ? "w-18 flex-none" : "flex-1"
+                            className={`min-w-0 font-mono text-right uppercase md:px-2 ${
+                              entry.companyName
+                                ? "ml-auto w-16 flex-none px-1.5"
+                                : "flex-1"
                             }`}
                           />
                         </InputGroup>
@@ -1951,7 +1953,7 @@ export function PortfolioForm() {
                         title={priceStatus.title}
                       >
                         <span
-                          className={`min-w-0 flex-1 truncate tabular-nums ${
+                          className={`shrink-0 whitespace-nowrap tabular-nums ${
                             entry.currentPrice === null &&
                             entry.priceStatus !== "loading"
                               ? "text-muted-foreground"
@@ -1962,19 +1964,21 @@ export function PortfolioForm() {
                         </span>
                         <span className="mx-2 h-4 w-px shrink-0 bg-border" />
                         <span
-                          className={`inline-flex max-w-20 shrink-0 items-center gap-1.5 truncate rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] ${priceStatusClass}`}
+                          className={`ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] ${priceStatusClass}`}
                         >
                           <span
                             className={`size-1.5 shrink-0 rounded-full ${priceStatusDotClass}`}
                           />
-                          <span className="truncate">{priceStatus.label}</span>
+                          <span className="whitespace-nowrap">
+                            {priceStatus.label}
+                          </span>
                         </span>
                       </div>
                       <Input
                         readOnly
                         value={getEntryWeightLabel(entry.id)}
                         aria-label={`${entry.ticker || "Holding"} weight`}
-                        className="px-2 text-sm tabular-nums"
+                        className="px-2 text-right text-sm tabular-nums"
                       />
                       <Input
                         readOnly
@@ -1984,7 +1988,7 @@ export function PortfolioForm() {
                             : "-"
                         }
                         aria-label={`${entry.ticker || "Holding"} market value`}
-                        className="px-2 text-sm tabular-nums"
+                        className="px-2 text-right text-sm tabular-nums"
                       />
                       <Input
                         readOnly
@@ -1994,7 +1998,7 @@ export function PortfolioForm() {
                             : "-"
                         }
                         aria-label={`${entry.ticker || "Holding"} day move`}
-                        className={`px-2 text-sm tabular-nums ${dayChangeClass}`}
+                        className={`px-2 text-right text-sm tabular-nums ${dayChangeClass}`}
                       />
                       <Input
                         readOnly
@@ -2002,7 +2006,7 @@ export function PortfolioForm() {
                           dayChange ? formatSignedCurrency(dayChange.pnl) : "-"
                         }
                         aria-label={`${entry.ticker || "Holding"} day P&L`}
-                        className={`px-2 text-sm tabular-nums ${dayChangeClass}`}
+                        className={`px-2 text-right text-sm tabular-nums ${dayChangeClass}`}
                       />
                       <div className="flex items-center">
                         <Button

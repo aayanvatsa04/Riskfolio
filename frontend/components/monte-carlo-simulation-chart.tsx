@@ -167,6 +167,7 @@ export function MonteCarloSimulationChart({
   const [dataRequestKey, setDataRequestKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const skeletonClass = isLoading ? "" : "animate-none bg-muted/70"
 
   const holdingsKey = useMemo(() => JSON.stringify(holdings), [holdings])
   const requestHoldings = useMemo(
@@ -503,11 +504,11 @@ export function MonteCarloSimulationChart({
           </ResponsiveContainer>
         ) : (
           <div className="grid h-full grid-rows-[1fr_auto] gap-4 rounded-md bg-muted/50 p-4">
-            <Skeleton className="h-full w-full" />
+            <Skeleton className={`h-full w-full ${skeletonClass}`} />
             <div className="grid grid-cols-3 gap-3">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-full" />
+              <Skeleton className={`h-4 w-full ${skeletonClass}`} />
+              <Skeleton className={`h-4 w-full ${skeletonClass}`} />
+              <Skeleton className={`h-4 w-full ${skeletonClass}`} />
             </div>
           </div>
         )}
