@@ -476,7 +476,7 @@ all contributors use identical package versions.
 | Practice | Implementation |
 |---|---|
 | Modular Architecture | Monte Carlo, MPT, and Stress Test engines strictly decoupled from the FastAPI layer |
-| Test-Driven Development (TDD) | 119-test Pytest suite (hand-written + Hypothesis property-based tests) covering all three engines, API endpoints, and data pipeline |
+| Test-Driven Development (TDD) | 124-test Pytest suite (hand-written + Hypothesis property-based tests) covering all three engines, API endpoints, and data pipeline |
 | Branch Protection & PR Workflow | All changes via feature branches and pull requests — direct pushes to main blocked |
 | Conventional Commits | Standardised commit message format enforced across the team |
 | Pre-commit Hooks | Ruff linter and formatter run automatically on every commit |
