@@ -248,6 +248,46 @@ class TestRunMonteCarlo:
         result_22day = run_monte_carlo(mu, sigma, sample_weights, 10_000, 22, 10_000)
         assert np.std(result_22day) > np.std(result_1day)
 
+    def test_seed_parameter_produces_identical_results(
+        self, sample_statistics, sample_weights
+    ):
+        """
+        The seed parameter exists specifically so the Stress Test engine
+        can share one seed across its baseline and shocked calls (see
+        run_stress_test_analysis()) -- this is the core guarantee that
+        makes that possible: two SEPARATE calls with the SAME seed value
+        must produce byte-identical output.
+        """
+        mu, sigma = sample_statistics
+        result_1 = run_monte_carlo(mu, sigma, sample_weights, 10_000, 1, 1000, seed=42)
+        result_2 = run_monte_carlo(mu, sigma, sample_weights, 10_000, 1, 1000, seed=42)
+        assert np.array_equal(result_1, result_2)
+
+    def test_different_seeds_produce_different_results(
+        self, sample_statistics, sample_weights
+    ):
+        """A different seed value must produce different output --
+        confirms the seed is actually being used, not silently ignored."""
+        mu, sigma = sample_statistics
+        result_1 = run_monte_carlo(mu, sigma, sample_weights, 10_000, 1, 1000, seed=42)
+        result_2 = run_monte_carlo(mu, sigma, sample_weights, 10_000, 1, 1000, seed=123)
+        assert not np.array_equal(result_1, result_2)
+
+    def test_no_seed_preserves_existing_unseeded_behavior(
+        self, sample_statistics, sample_weights
+    ):
+        """
+        Backward-compatibility check: /analyze and /monte-carlo-paths
+        never pass a seed, and must keep working exactly as before --
+        two calls with no seed argument should draw from NumPy's global
+        random state and produce different results, same as prior to
+        this parameter being added.
+        """
+        mu, sigma = sample_statistics
+        result_1 = run_monte_carlo(mu, sigma, sample_weights, 10_000, 1, 1000)
+        result_2 = run_monte_carlo(mu, sigma, sample_weights, 10_000, 1, 1000)
+        assert not np.array_equal(result_1, result_2)
+
 
 class TestRunMonteCarloPricePaths:
     def test_output_shape_includes_initial_day(self, sample_statistics, sample_weights):
