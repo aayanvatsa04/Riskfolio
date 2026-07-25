@@ -983,7 +983,11 @@ export function PortfolioForm() {
   }, [confidenceLevel, entries, horizon, nSimulations, portfolioName])
 
   useEffect(() => {
-    if (!isPortfolioInitializationComplete || !autosaveSnapshot) {
+    if (
+      !userSettings.autosaveEnabled ||
+      !isPortfolioInitializationComplete ||
+      !autosaveSnapshot
+    ) {
       return
     }
 
@@ -1064,6 +1068,7 @@ export function PortfolioForm() {
     selectedPortfolioId,
     supabase,
     user,
+    userSettings.autosaveEnabled,
   ])
 
   const buildStressTestRequest = useCallback(
@@ -1757,14 +1762,22 @@ export function PortfolioForm() {
                     {isAutosaving ? (
                       <Loader2 className="size-3.5 shrink-0 animate-spin" />
                     ) : (
-                      <span className="size-2 shrink-0 rounded-full bg-chart-3" />
+                      <span
+                        className={`size-2 shrink-0 rounded-full ${
+                          userSettings.autosaveEnabled
+                            ? "bg-chart-3"
+                            : "bg-muted-foreground"
+                        }`}
+                      />
                     )}
                     <span className="truncate">
                       {isAutosaving
                         ? "Autosaving"
                         : saveStatus
                           ? saveStatus
-                          : "Autosave on"}
+                          : userSettings.autosaveEnabled
+                            ? "Autosave on"
+                            : "Autosave off"}
                     </span>
                   </div>
                 </div>

@@ -133,6 +133,20 @@ export async function deleteCloudPortfolio(
   }
 }
 
+export async function deleteAllCloudPortfolios(
+  supabase: SupabaseClient,
+  userId: string,
+) {
+  const { error } = await supabase
+    .from("portfolios")
+    .delete()
+    .eq("user_id", userId)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
 export async function mirrorLocalAndCloudPortfolios(
   supabase: SupabaseClient,
   userId: string,
