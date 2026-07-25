@@ -217,6 +217,7 @@ def run_monte_carlo(
     portfolio_value: float,
     horizon: int,
     n_simulations: int = 10_000,
+    seed: int | None = None,
 ) -> np.ndarray:
     """
     Run n_simulations Monte Carlo simulations of portfolio P&L
@@ -249,6 +250,28 @@ def run_monte_carlo(
         5. Compute portfolio return: weights dot each column
         6. Scale by portfolio_value -> dollar P&L array
 
+    Args:
+        seed: Optional. If provided, draws Z from a freshly-created
+            np.random.default_rng(seed) instead of NumPy's global random
+            state. This exists specifically so the Stress Test engine can
+            call this function TWICE (baseline, then shocked) with the
+            SAME seed -- guaranteeing both draw byte-identical random
+            shocks. Without this, two independent calls draw two
+            independent random samples, and for a small reweighting the
+            resulting Monte Carlo sampling noise can easily be LARGER
+            than the true effect being measured -- meaning the
+            baseline-vs-shocked comparison can point in the wrong
+            direction even though each individual VaR/CVaR number is
+            itself a perfectly valid estimate. This is a standard
+            variance-reduction technique known as "common random
+            numbers": sharing the same underlying randomness across two
+            scenarios cancels sampling noise out of their DIFFERENCE,
+            without making either individual estimate less random.
+            /analyze and /monte-carlo-paths each only ever call this
+            function once per request, so they never need to pass a
+            seed -- the default (None) preserves their existing
+            behaviour exactly.
+
     Returns:
         Array of shape (n_simulations,) — the full P&L distribution.
         Positive values = gains, negative values = losses.
@@ -256,7 +279,11 @@ def run_monte_carlo(
     n_assets = len(mu)
     L = cholesky_decomposition(cov_matrix)
 
-    Z = np.random.standard_normal((n_assets, n_simulations))
+    if seed is not None:
+        rng = np.random.default_rng(seed)
+        Z = rng.standard_normal((n_assets, n_simulations))
+    else:
+        Z = np.random.standard_normal((n_assets, n_simulations))
     correlated_shocks = L @ Z
 
     mu_scaled = mu * horizon
