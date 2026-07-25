@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -158,12 +159,12 @@ const CONFIDENCE_LEVEL_OPTIONS = [90, 95, 99] as const
 const DEFAULT_N_PORTFOLIOS = "5000"
 const DEFAULT_RISK_FREE_RATE = 0.05
 const AUTOSAVE_DELAY_MS = 900
-const STARTER_PORTFOLIO_NAME = "Starter 30/30/40 Portfolio"
-const STARTER_PORTFOLIO_VALUE = 100_000
-const STARTER_PORTFOLIO_ALLOCATIONS = [
-  { ticker: "GOOGL", weight: 0.3 },
-  { ticker: "TSLA", weight: 0.3 },
-  { ticker: "AAPL", weight: 0.4 },
+const STARTER_PORTFOLIO_NAME = "Sample Portfolio"
+const STARTER_PORTFOLIO_HOLDINGS = [
+  { ticker: "AAPL", quantity: 27 },
+  { ticker: "KO", quantity: 108 },
+  { ticker: "XOM", quantity: 58 },
+  { ticker: "JPM", quantity: 26 },
 ] as const
 
 function formatCacheTimestamp(value: string) {
@@ -230,10 +231,10 @@ function normalizeConfidenceLevel(value: number | null | undefined): number {
 }
 
 function createStarterEntries(): PortfolioEntry[] {
-  return STARTER_PORTFOLIO_ALLOCATIONS.map((allocation) => ({
-    id: `starter-${allocation.ticker}`,
-    ticker: allocation.ticker,
-    quantity: 0,
+  return STARTER_PORTFOLIO_HOLDINGS.map((holding) => ({
+    id: `starter-${holding.ticker}`,
+    ticker: holding.ticker,
+    quantity: holding.quantity,
     currentPrice: null,
     priceStatus: "loading",
   }))
@@ -294,6 +295,7 @@ function AnalysisPlaceholderCard({
 }
 
 export function PortfolioForm() {
+  const router = useRouter()
   const [entries, setEntries] = useState<PortfolioEntry[]>(createStarterEntries)
   const [confidenceLevel, setConfidenceLevel] = useState<number>(
     DEFAULT_CONFIDENCE_LEVEL,
@@ -322,6 +324,13 @@ export function PortfolioForm() {
   const [stressVolatilityPercent, setStressVolatilityPercent] = useState(100)
   const [error, setError] = useState<string | null>(null)
   const [savedPortfolios, setSavedPortfolios] = useState<SavedPortfolio[]>([])
+  const [hasCachedPortfolios, setHasCachedPortfolios] = useState<
+    boolean | null
+  >(null)
+  const [
+    isPortfolioInitializationComplete,
+    setIsPortfolioInitializationComplete,
+  ] = useState(false)
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string | null>(
     null,
   )
@@ -353,7 +362,6 @@ export function PortfolioForm() {
     async () => {},
   )
   const lastAutosaveKeyRef = useRef<string | null>(null)
-  const hasCheckedInitialPortfolioRef = useRef(false)
   const hasSeededStarterPortfolioRef = useRef(false)
 
   const createBlankEntry = (): PortfolioEntry => ({
@@ -366,7 +374,7 @@ export function PortfolioForm() {
 
   const refreshSavedPortfolios = useCallback(async () => {
     const portfolios = await portfolioDb.savedPortfolios
-      .orderBy("updatedAt")
+      .orderBy("lastAccessedAt")
       .reverse()
       .toArray()
 
@@ -722,11 +730,13 @@ export function PortfolioForm() {
         nSimulations,
         createdAt: existingPortfolio?.createdAt ?? now,
         updatedAt: now,
+        lastAccessedAt: now,
       }
 
       await portfolioDb.savedPortfolios.put(portfolio)
       setSelectedPortfolioId(portfolio.id)
       setPortfolioName(portfolio.name)
+      router.replace(`/?portfolio=${encodeURIComponent(portfolio.id)}`)
       lastAutosaveKeyRef.current = getPortfolioSnapshotKey({
         holdings,
         name: portfolio.name,
@@ -768,6 +778,10 @@ export function PortfolioForm() {
       return
     }
 
+    const lastAccessedAt = new Date().toISOString()
+    await portfolioDb.savedPortfolios.update(portfolio.id, {
+      lastAccessedAt,
+    })
     setSelectedPortfolioId(portfolio.id)
     setPortfolioName(portfolio.name)
     setEntries(getEntriesFromPortfolio(portfolio))
@@ -795,6 +809,8 @@ export function PortfolioForm() {
     setStressVolatilityPercent(100)
     setError(null)
     setSaveStatus(`Loaded`)
+    router.replace(`/?portfolio=${encodeURIComponent(portfolio.id)}`)
+    await refreshSavedPortfolios()
   }
 
   loadPortfolioRef.current = handleLoadPortfolio
@@ -851,6 +867,7 @@ export function PortfolioForm() {
   const handleNewPortfolio = () => {
     clearWorkingPortfolio()
     setSaveStatus(null)
+    router.replace("/")
   }
 
   newPortfolioRef.current = handleNewPortfolio
@@ -886,19 +903,45 @@ export function PortfolioForm() {
       handleSidebarPortfolioDelete,
     )
 
-    const initialPortfolioId = new URLSearchParams(window.location.search).get(
-      "portfolio",
-    )
+    let cancelled = false
 
-    if (initialPortfolioId) {
-      void loadPortfolioRef.current(initialPortfolioId).finally(() => {
-        hasCheckedInitialPortfolioRef.current = true
-      })
-    } else {
-      hasCheckedInitialPortfolioRef.current = true
-    }
+    void (async () => {
+      try {
+        const initialPortfolioId = new URLSearchParams(
+          window.location.search,
+        ).get("portfolio")
+        const requestedPortfolio = initialPortfolioId
+          ? await portfolioDb.savedPortfolios.get(initialPortfolioId)
+          : null
+        const portfolio =
+          requestedPortfolio ??
+          (await portfolioDb.savedPortfolios.orderBy("lastAccessedAt").last())
+
+        if (cancelled) {
+          return
+        }
+
+        if (portfolio) {
+          setHasCachedPortfolios(true)
+          await loadPortfolioRef.current(portfolio.id)
+        } else {
+          setHasCachedPortfolios(false)
+        }
+      } catch {
+        if (!cancelled) {
+          // Avoid creating a duplicate if IndexedDB cannot be inspected.
+          setHasCachedPortfolios(true)
+          setSaveStatus("Unable to load cached portfolios.")
+        }
+      } finally {
+        if (!cancelled) {
+          setIsPortfolioInitializationComplete(true)
+        }
+      }
+    })()
 
     return () => {
+      cancelled = true
       window.removeEventListener(
         PORTFOLIO_LOAD_EVENT,
         handleSidebarPortfolioLoad,
@@ -940,7 +983,7 @@ export function PortfolioForm() {
   }, [confidenceLevel, entries, horizon, nSimulations, portfolioName])
 
   useEffect(() => {
-    if (!autosaveSnapshot) {
+    if (!isPortfolioInitializationComplete || !autosaveSnapshot) {
       return
     }
 
@@ -969,11 +1012,15 @@ export function PortfolioForm() {
             nSimulations,
             createdAt: existingPortfolio?.createdAt ?? now,
             updatedAt: now,
+            lastAccessedAt: existingPortfolio?.lastAccessedAt ?? now,
           }
 
           await portfolioDb.savedPortfolios.put(portfolio)
           lastAutosaveKeyRef.current = autosaveSnapshot.key
           setSelectedPortfolioId((current) => current ?? portfolio.id)
+          if (!selectedPortfolioId) {
+            router.replace(`/?portfolio=${encodeURIComponent(portfolio.id)}`)
+          }
 
           if (!portfolioName.trim()) {
             setPortfolioName(portfolio.name)
@@ -1009,9 +1056,11 @@ export function PortfolioForm() {
     autosaveSnapshot,
     confidenceLevel,
     horizon,
+    isPortfolioInitializationComplete,
     nSimulations,
     portfolioName,
     refreshSavedPortfolios,
+    router,
     selectedPortfolioId,
     supabase,
     user,
@@ -1574,69 +1623,88 @@ export function PortfolioForm() {
   useEffect(() => {
     if (
       hasSeededStarterPortfolioRef.current ||
-      !hasCheckedInitialPortfolioRef.current ||
+      !isPortfolioInitializationComplete ||
+      hasCachedPortfolios !== false ||
       selectedPortfolioId
     ) {
       return
     }
 
-    const starterTickers = STARTER_PORTFOLIO_ALLOCATIONS.map(
-      (allocation) => allocation.ticker,
-    )
-    const isStarterShape =
-      entries.length === STARTER_PORTFOLIO_ALLOCATIONS.length &&
-      starterTickers.every((ticker) =>
-        entries.some((entry) => entry.ticker.toUpperCase().trim() === ticker),
-      )
-
-    if (!isStarterShape) {
-      return
-    }
-
-    const ready = STARTER_PORTFOLIO_ALLOCATIONS.every((allocation) => {
-      const entry = entries.find(
-        (item) => item.ticker.toUpperCase().trim() === allocation.ticker,
-      )
-
-      return typeof entry?.currentPrice === "number" && entry.currentPrice > 0
-    })
-
-    if (!ready) {
-      return
-    }
-
-    const nextEntries = entries.map((entry) => {
-      const allocation = STARTER_PORTFOLIO_ALLOCATIONS.find(
-        (item) => item.ticker === entry.ticker.toUpperCase().trim(),
-      )
-
-      if (!allocation || !entry.currentPrice) {
-        return entry
-      }
-
-      return {
-        ...entry,
-        quantity: Number(
-          (
-            (STARTER_PORTFOLIO_VALUE * allocation.weight) /
-            entry.currentPrice
-          ).toFixed(6),
-        ),
-      }
-    })
-    const starterHoldings = nextEntries
-      .map((entry) => ({
-        ticker: entry.ticker.toUpperCase().trim(),
-        quantity: entry.quantity,
-      }))
-      .filter((holding) => holding.ticker && holding.quantity > 0)
+    const starterHoldings = STARTER_PORTFOLIO_HOLDINGS.map((holding) => ({
+      ticker: holding.ticker,
+      quantity: holding.quantity,
+    }))
 
     hasSeededStarterPortfolioRef.current = true
-    setEntries(nextEntries)
+    const now = new Date().toISOString()
+    const starterPortfolio: SavedPortfolio = {
+      id: createPortfolioId(),
+      name: STARTER_PORTFOLIO_NAME,
+      holdings: starterHoldings,
+      confidenceLevel,
+      horizon,
+      nSimulations,
+      createdAt: now,
+      updatedAt: now,
+      lastAccessedAt: now,
+    }
+    lastAutosaveKeyRef.current = getPortfolioSnapshotKey({
+      holdings: starterPortfolio.holdings,
+      name: starterPortfolio.name,
+      confidenceLevel: starterPortfolio.confidenceLevel,
+      horizon: starterPortfolio.horizon,
+      nSimulations: starterPortfolio.nSimulations,
+    })
+    setSelectedPortfolioId(starterPortfolio.id)
     setPortfolioName(STARTER_PORTFOLIO_NAME)
-    setSaveStatus("Loaded starter 30/30/40 portfolio.")
+    setSaveStatus("Saving Sample Portfolio...")
+    void portfolioDb.savedPortfolios
+      .put(starterPortfolio)
+      .then(async () => {
+        setHasCachedPortfolios(true)
+
+        if (supabase && user) {
+          try {
+            await upsertCloudPortfolio(supabase, user.id, starterPortfolio)
+            setSyncStatus("Sample Portfolio synced to cloud.")
+          } catch (syncError) {
+            setAuthError(
+              syncError instanceof Error
+                ? syncError.message
+                : "Failed to sync Sample Portfolio.",
+            )
+          }
+        }
+
+        await refreshSavedPortfolios()
+        router.replace(`/?portfolio=${encodeURIComponent(starterPortfolio.id)}`)
+        setSaveStatus("Saved Sample Portfolio.")
+      })
+      .catch((saveError) => {
+        lastAutosaveKeyRef.current = null
+        setSelectedPortfolioId((current) =>
+          current === starterPortfolio.id ? null : current,
+        )
+        setSaveStatus(
+          saveError instanceof Error
+            ? saveError.message
+            : "Failed to save Sample Portfolio.",
+        )
+      })
     void runAllAnalyses(starterHoldings)
-  }, [entries, runAllAnalyses, selectedPortfolioId])
+  }, [
+    confidenceLevel,
+    hasCachedPortfolios,
+    horizon,
+    isPortfolioInitializationComplete,
+    nSimulations,
+    refreshSavedPortfolios,
+    router,
+    runAllAnalyses,
+    selectedPortfolioId,
+    supabase,
+    user,
+  ])
 
   const isAnyAnalysisLoading =
     isVarLoading || isStressLoading || isOptimizerLoading

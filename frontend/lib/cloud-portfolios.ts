@@ -77,6 +77,7 @@ function fromCloudRow(row: CloudPortfolioRow): SavedPortfolio {
     nSimulations: row.n_simulations,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastAccessedAt: row.updated_at,
   }
 }
 
@@ -181,7 +182,10 @@ export async function mirrorLocalAndCloudPortfolios(
       await upsertCloudPortfolio(supabase, userId, local)
       result.uploaded += 1
     } else if (cloudUpdatedAt > localUpdatedAt) {
-      await portfolioDb.savedPortfolios.put(cloud)
+      await portfolioDb.savedPortfolios.put({
+        ...cloud,
+        lastAccessedAt: local.lastAccessedAt,
+      })
       result.downloaded += 1
     } else {
       result.unchanged += 1

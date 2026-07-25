@@ -91,7 +91,7 @@ export function AppSidebar() {
 
   const refreshSavedPortfolios = useCallback(async () => {
     const portfolios = await portfolioDb.savedPortfolios
-      .orderBy("updatedAt")
+      .orderBy("lastAccessedAt")
       .reverse()
       .limit(8)
       .toArray()

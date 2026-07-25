@@ -111,8 +111,8 @@ const makeMarker = (color: string) =>
   }
 
 const GreenMarker = makeMarker(maxSharpeColor)
-const BlueMarker = makeMarker(minVolatilityColor)
-const AmberMarker = makeMarker(currentPortfolioColor)
+const YellowMarker = makeMarker(minVolatilityColor)
+const BlueMarker = makeMarker(currentPortfolioColor)
 
 function getPaddedDomain(values: number[]): [number, number] {
   const finiteValues = values.filter(Number.isFinite)
@@ -261,7 +261,7 @@ export function EfficientFrontierChart({
           name="Min Volatility"
           data={[minVolPoint]}
           fill={minVolatilityColor}
-          shape={BlueMarker}
+          shape={YellowMarker}
         />
 
         <Scatter
@@ -275,7 +275,7 @@ export function EfficientFrontierChart({
           name="Your portfolio"
           data={[currentPoint]}
           fill={currentPortfolioColor}
-          shape={AmberMarker}
+          shape={BlueMarker}
         />
       </ComposedChart>
     </ResponsiveContainer>

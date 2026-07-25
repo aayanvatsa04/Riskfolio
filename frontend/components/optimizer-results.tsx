@@ -245,14 +245,14 @@ export function OptimizerResults({ result }: { result: OptimizerResult }) {
             title="Min Volatility"
             icon={TrendingDown}
             portfolio={result.min_vol_portfolio}
-            accentColor="text-blue-500"
+            accentColor="text-yellow-500"
             badge="Most stable"
           />
           <PortfolioStatsCard
             title="Your Portfolio"
             icon={Target}
             portfolio={result.current_portfolio}
-            accentColor="text-amber-500"
+            accentColor="text-blue-500"
           />
         </div>
 
@@ -265,11 +265,11 @@ export function OptimizerResults({ result }: { result: OptimizerResult }) {
             allocation with the highest Sharpe ratio - the most return per unit
             of risk achievable from{" "}
             <span className="font-medium text-foreground">{tickerList}</span>.
-            The <span className="font-medium text-blue-600">blue dot</span> is
-            the least volatile allocation. The{" "}
+            The <span className="font-medium text-yellow-600">yellow dot</span>{" "}
+            is the least volatile allocation. The{" "}
             <span className="font-medium text-red-600">red line</span> traces
             the analytical Markowitz frontier. Your current weighting is shown
-            in <span className="font-medium text-amber-600">amber</span> - if it
+            in <span className="font-medium text-blue-600">blue</span> - if it
             sits inside the frontier cloud, rebalancing could improve your
             risk-return profile without changing which stocks you hold.
           </p>
