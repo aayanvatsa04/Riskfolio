@@ -237,6 +237,7 @@ export function EfficientFrontierChart({
           name="Volatility"
           unit="%"
           domain={chartDomain.x}
+          allowDataOverflow
           axisLine={{ stroke: gridColor }}
           tickLine={{ stroke: gridColor }}
           label={{
@@ -254,6 +255,7 @@ export function EfficientFrontierChart({
           name="Return"
           unit="%"
           domain={chartDomain.y}
+          allowDataOverflow
           axisLine={{ stroke: gridColor }}
           tickLine={{ stroke: gridColor }}
           label={{
