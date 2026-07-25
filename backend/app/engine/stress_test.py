@@ -285,8 +285,21 @@ def run_stress_test_analysis(
 
     # ── Step 4: BASELINE run — original weights, original sigma ─────────
     t0 = time.perf_counter()
+
+    # Generate ONE fresh seed for this request, then pass the SAME seed
+    # to both the baseline and shocked simulations below. Each call
+    # independently creates its own np.random.default_rng(shared_seed),
+    # so both draw byte-identical random shocks -- this cancels Monte
+    # Carlo sampling noise out of the baseline-vs-shocked COMPARISON
+    # specifically (see run_monte_carlo()'s docstring for the full
+    # reasoning), while a fresh seed each request still means repeated
+    # stress tests on the same inputs show natural simulation
+    # variability, just not BETWEEN baseline and shocked within one
+    # request.
+    shared_seed = int(np.random.SeedSequence().generate_state(1)[0])
+
     baseline_pnl = run_monte_carlo(
-        mu, sigma, weights, portfolio_value, horizon, n_simulations
+        mu, sigma, weights, portfolio_value, horizon, n_simulations, seed=shared_seed
     )
     baseline_results = calculate_var(baseline_pnl, confidence_level)
     # Inject portfolio-level context so "baseline" is a fully self
@@ -326,6 +339,7 @@ def run_stress_test_analysis(
         shocked_portfolio_value,
         horizon,
         n_simulations,
+        seed=shared_seed,
     )
     shocked_results = calculate_var(shocked_pnl, confidence_level)
     shocked_results["portfolio_value"] = shocked_portfolio_value
