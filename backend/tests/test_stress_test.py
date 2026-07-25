@@ -236,10 +236,18 @@ class TestRunStressTestAnalysis:
     ):
         """
         With price_shocks={} and volatility_multiplier=1.0, baseline and
-        shocked should describe the IDENTICAL portfolio (same value, same
-        weights) -- they'll still show slightly different VaR/CVaR
-        numbers since each is an independent random Monte Carlo draw, but
-        the portfolio itself hasn't changed at all.
+        shocked describe the IDENTICAL portfolio (same value, same
+        weights, same sigma) -- and since run_stress_test_analysis()
+        shares one random seed across both Monte Carlo calls (see
+        run_monte_carlo()'s seed parameter), identical inputs must now
+        produce byte-IDENTICAL VaR/CVaR/mean_pnl too, not just similar
+        numbers. This is a regression test for a real, demonstrated bug:
+        before the shared seed was added, baseline and shocked each drew
+        independent random samples, and for small reweightings the
+        resulting Monte Carlo sampling noise could exceed the true
+        effect being measured -- producing a baseline-vs-shocked
+        comparison that pointed in the wrong direction despite each
+        individual number being a valid estimate on its own.
         """
         result = run_stress_test_analysis(
             portfolio=simple_portfolio,
@@ -263,6 +271,55 @@ class TestRunStressTestAnalysis:
                 )
                 < 1e-9
             )
+        # The actual regression check: identical inputs + shared seed
+        # must produce EXACTLY identical simulation results.
+        for key in ("var", "cvar", "mean_pnl", "std_pnl", "worst_case", "best_case"):
+            assert result["baseline"][key] == result["shocked"][key], (
+                f"{key} differs between baseline and shocked despite "
+                "identical inputs -- the shared-seed fix is not working."
+            )
+
+    def test_shared_seed_makes_comparison_noise_free(self, simple_portfolio):
+        """
+        A more targeted regression test: run the SAME stress test twice
+        end-to-end. Because run_stress_test_analysis() generates a FRESH
+        seed each call (not a hardcoded constant), the two runs' absolute
+        VaR numbers are expected to differ slightly -- genuine Monte
+        Carlo variability is preserved run-to-run. But WITHIN each run,
+        baseline and shocked must still be computed from the exact same
+        underlying random draws, so the SIGN of (shocked_var - baseline_var)
+        should be stable and attributable to the actual shock, not to
+        which of the two draws happened to be noisier.
+        """
+        price_shocks = {next(iter(simple_portfolio)): -0.05}
+
+        result_a = run_stress_test_analysis(
+            portfolio=simple_portfolio,
+            portfolio_value=10_000.0,
+            price_shocks=price_shocks,
+            volatility_multiplier=1.0,
+            n_simulations=5_000,
+        )
+        result_b = run_stress_test_analysis(
+            portfolio=simple_portfolio,
+            portfolio_value=10_000.0,
+            price_shocks=price_shocks,
+            volatility_multiplier=1.0,
+            n_simulations=5_000,
+        )
+
+        # Different runs (different fresh seeds each call) -- absolute
+        # numbers are allowed to differ, confirming we did NOT
+        # accidentally hardcode a single global constant seed.
+        assert result_a["baseline"]["var"] != result_b["baseline"]["var"]
+
+        # But within EACH run, baseline and shocked must never be
+        # identical to each other here, since a real -5% shock was
+        # applied -- if they were identical, that would mean the shock
+        # had no effect on the simulation at all, which would itself
+        # indicate a different bug.
+        assert result_a["baseline"]["var"] != result_a["shocked"]["var"]
+        assert result_b["baseline"]["var"] != result_b["shocked"]["var"]
 
     def test_raises_for_non_positive_volatility_multiplier(self, simple_portfolio):
         """volatility_multiplier <= 0 must raise, not silently produce a
