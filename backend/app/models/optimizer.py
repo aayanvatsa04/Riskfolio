@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -9,36 +9,19 @@ from app.models.common import HoldingRequest, HoldingValuation
 
 
 class ShareTarget(BaseModel):
-    """One ticker's actionable target within a ShareTargetsSummary --
-    how many shares to hold, vs. how many are currently held."""
-
-    target_shares: int
-    current_shares: int
-    # Positive = buy, negative = sell, 0 = already correct.
-    delta_shares: int
-    # Dollar amount this ticker should hold at the computed
-    # suggested_portfolio_value (see ShareTargetsSummary).
+    action: Literal["buy", "sell", "already_correct"]
+    current_shares: float
+    target_shares: float
+    delta_shares: float
+    shares_to_trade: float
+    latest_price: float
+    current_weight: float
+    target_weight: float
     target_value: float
 
 
-class ShareTargetsSummary(BaseModel):
-    """
-    Translates a PortfolioPoint's weight percentages into concrete,
-    actionable share counts -- see compute_share_targets() in
-    mpt_optimizer.py for the full derivation of suggested_portfolio_value.
-
-    Weights alone only fix a RATIO between tickers, not an absolute
-    dollar amount -- a portfolio holding twice as much of everything in
-    the same ratio has identical return/volatility/Sharpe. This summary
-    picks one concrete total (suggested_portfolio_value) chosen to
-    require the LEAST total buying/selling from the user's current
-    holdings, then reports the resulting per-ticker share targets.
-    """
-
-    # The total dollar value this target portfolio is scaled to. Chosen
-    # via least-squares projection onto the user's current market values
-    # -- NOT necessarily equal to today's total portfolio value.
-    suggested_portfolio_value: float
+class ShareTargets(BaseModel):
+    portfolio_value: float
     shares: dict[str, ShareTarget]
 
 
@@ -47,10 +30,7 @@ class PortfolioPoint(BaseModel):
     volatility: float
     sharpe: float
     weights: dict[str, float] | None = None
-    # Optional: populated by the /optimize endpoint using the user's
-    # actual holdings, so the frontend can show "hold 12 shares
-    # (currently 7) -- buy 5" instead of only a bare percentage.
-    share_targets: ShareTargetsSummary | None = None
+    share_targets: ShareTargets | None = None
 
 
 class FrontierPoint(BaseModel):

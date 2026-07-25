@@ -4,6 +4,7 @@ import math
 from typing import Annotated
 
 import pandas as pd
+import yfinance as yf
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,7 +13,7 @@ from app.engine.monte_carlo_var import (
     run_price_path_analysis,
     run_var_analysis,
 )
-from app.engine.mpt_optimizer import compute_share_targets, run_mpt_optimization
+from app.engine.mpt_optimizer import run_mpt_optimization
 from app.engine.stress_test import run_stress_test_analysis
 from app.models import (
     HealthResponse,
@@ -64,6 +65,119 @@ ALLOWED_PERIODS = {
     "max",
 }
 
+SHARE_TARGET_TOLERANCE = 1e-4
+
+
+def _read_yfinance_value(source: object, key: str) -> object:
+    if isinstance(source, dict):
+        return source.get(key)
+
+    value = getattr(source, key, None)
+    if value is not None:
+        return value
+
+    if hasattr(source, "get"):
+        try:
+            return source.get(key)
+        except Exception:
+            return None
+
+    return None
+
+
+def _get_quote_currency(ticker: str) -> str | None:
+    """
+    Best-effort yfinance metadata lookup.
+
+    yfinance metadata can be unavailable or slow for otherwise valid symbols,
+    so callers should treat None as "unknown" instead of invalid.
+    """
+    try:
+        fast_info = yf.Ticker(ticker).fast_info
+    except Exception:
+        return None
+
+    raw_currency = _read_yfinance_value(fast_info, "currency")
+
+    if not isinstance(raw_currency, str):
+        return None
+
+    currency = raw_currency.strip().upper()
+    return currency or None
+
+
+def _get_ticker_metadata(ticker: str) -> dict:
+    metadata: dict[str, str | None] = {
+        "name": None,
+        "currency": None,
+        "exchange": None,
+    }
+    ticker_client = None
+
+    try:
+        ticker_client = yf.Ticker(ticker)
+        fast_info = ticker_client.fast_info
+    except Exception:
+        fast_info = None
+
+    if fast_info is not None:
+        raw_currency = _read_yfinance_value(fast_info, "currency")
+        if isinstance(raw_currency, str) and raw_currency.strip():
+            metadata["currency"] = raw_currency.strip().upper()
+
+        raw_exchange = _read_yfinance_value(fast_info, "exchange")
+        if isinstance(raw_exchange, str) and raw_exchange.strip():
+            metadata["exchange"] = raw_exchange.strip()
+
+    info = {}
+    if ticker_client is not None:
+        try:
+            info = ticker_client.get_info()
+        except Exception:
+            try:
+                info = ticker_client.info
+            except Exception:
+                info = {}
+
+    if isinstance(info, dict):
+        for name_key in ("shortName", "longName", "displayName"):
+            raw_name = info.get(name_key)
+            if isinstance(raw_name, str) and raw_name.strip():
+                metadata["name"] = raw_name.strip()
+                break
+
+        raw_currency = info.get("currency")
+        if metadata["currency"] is None and isinstance(raw_currency, str):
+            metadata["currency"] = raw_currency.strip().upper() or None
+
+        raw_exchange = info.get("exchange")
+        if metadata["exchange"] is None and isinstance(raw_exchange, str):
+            metadata["exchange"] = raw_exchange.strip() or None
+
+    return metadata
+
+
+def _build_ticker_metadata(tickers: list[str]) -> dict[str, dict]:
+    return {ticker: _get_ticker_metadata(ticker) for ticker in tickers}
+
+
+def _validate_usd_quoted_tickers(tickers: list[str]) -> None:
+    non_usd: dict[str, str] = {}
+
+    for ticker in tickers:
+        currency = _get_quote_currency(ticker)
+        if currency is not None and currency != "USD":
+            non_usd[ticker] = currency
+
+    if non_usd:
+        details = ", ".join(
+            f"{ticker} ({currency})" for ticker, currency in sorted(non_usd.items())
+        )
+        raise ValueError(
+            "Riskfolio currently supports USD-quoted tickers only. "
+            f"Confirmed non-USD ticker(s): {details}."
+        )
+
 
 def _combine_holdings(holdings: list[HoldingRequest]) -> dict[str, float]:
     quantities: dict[str, float] = {}
@@ -87,6 +201,7 @@ def _build_weighted_portfolio(
 ) -> tuple[dict[str, float], float, list[dict]]:
     quantities = _combine_holdings(holdings)
     tickers = list(quantities)
+    _validate_usd_quoted_tickers(tickers)
     latest_prices = _latest_price_row(fetch_historical_prices(tickers, period="5d"))
 
     valuations: list[dict] = []
@@ -122,6 +237,79 @@ def _build_weighted_portfolio(
         portfolio_weights[valuation["ticker"]] = weight
 
     return portfolio_weights, portfolio_value, valuations
+
+
+def _build_share_targets(
+    target_weights: dict[str, float] | None,
+    valuations: list[dict],
+    portfolio_value: float,
+) -> dict:
+    shares: dict[str, dict] = {}
+    normalized_target_weights = target_weights or {}
+
+    for valuation in valuations:
+        ticker = valuation["ticker"]
+        latest_price = float(valuation["latest_price"])
+        current_shares = float(valuation["quantity"])
+        current_weight = float(valuation["weight"])
+        target_weight = float(normalized_target_weights.get(ticker, 0.0))
+        target_shares = (
+            (portfolio_value * target_weight) / latest_price
+            if latest_price > 0
+            else 0.0
+        )
+        share_delta = target_shares - current_shares
+
+        if abs(share_delta) <= SHARE_TARGET_TOLERANCE:
+            action = "already_correct"
+            shares_to_trade = 0.0
+        elif share_delta > 0:
+            action = "buy"
+            shares_to_trade = share_delta
+        else:
+            action = "sell"
+            shares_to_trade = abs(share_delta)
+
+        shares[ticker] = {
+            "action": action,
+            "current_shares": current_shares,
+            "target_shares": target_shares,
+            "delta_shares": share_delta,
+            "shares_to_trade": shares_to_trade,
+            "latest_price": latest_price,
+            "current_weight": current_weight,
+            "target_weight": target_weight,
+            "target_value": portfolio_value * target_weight,
+        }
+
+    return {
+        "portfolio_value": portfolio_value,
+        "shares": shares,
+    }
+
+
+def _attach_share_targets(
+    optimization_result: dict,
+    valuations: list[dict],
+    portfolio_value: float,
+) -> dict:
+    for key in (
+        "max_sharpe_portfolio",
+        "min_vol_portfolio",
+        "current_portfolio",
+    ):
+        portfolio = optimization_result.get(key)
+        if not isinstance(portfolio, dict):
+            continue
+
+        weights = portfolio.get("weights")
+        portfolio["share_targets"] = _build_share_targets(
+            weights if isinstance(weights, dict) else None,
+            valuations,
+            portfolio_value,
+        )
+
+    return optimization_result
 
 
 def _normalize_tickers(raw_tickers: list[str]) -> list[str]:
@@ -230,6 +418,10 @@ async def historical_prices(
     period: Annotated[
         str, Query(description="yfinance period, defaulting to 5y.")
     ] = "5y",
+    include_metadata: Annotated[
+        bool,
+        Query(description="Include ticker name, currency, and exchange metadata."),
+    ] = False,
 ) -> dict:
     normalized_tickers = _normalize_tickers(tickers)
     if period not in ALLOWED_PERIODS:
@@ -237,18 +429,26 @@ async def historical_prices(
         raise HTTPException(status_code=422, detail=f"Period must be one of: {allowed}")
 
     try:
+        _validate_usd_quoted_tickers(normalized_tickers)
         prices = fetch_historical_prices(normalized_tickers, period=period)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=500,
             detail=f"Unable to fetch historical prices: {exc}",
         ) from exc
 
-    return {
+    response = {
         "tickers": normalized_tickers,
         "period": period,
         "rows": _serialize_prices(prices),
     }
+
+    if include_metadata:
+        response["metadata"] = _build_ticker_metadata(normalized_tickers)
+
+    return response
 
 
 @api_v1.post("/optimize", response_model=OptimizeResponse)
@@ -311,18 +511,7 @@ async def optimize_portfolio(request: OptimizeRequest) -> dict:
         result["portfolio_value"] = portfolio_value
         result["holdings"] = holdings
 
-        # Attach actionable share targets to each of the three portfolio
-        # points. Computed here (not in the engine) since it needs the
-        # user's actual holdings (quantities, live prices), which the
-        # engine itself never sees -- it only ever works with weights.
-        for key in ("max_sharpe_portfolio", "min_vol_portfolio", "current_portfolio"):
-            portfolio_weights_for_point = result[key].get("weights")
-            if portfolio_weights_for_point:
-                result[key]["share_targets"] = compute_share_targets(
-                    portfolio_weights_for_point, holdings
-                )
-
-        return result
+        return _attach_share_targets(result, holdings, portfolio_value)
 
     except (AssertionError, ValueError) as exc:
         # AssertionError: from engine internal assertions (e.g. weight sum check)
