@@ -44,7 +44,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     >
       <ResponsiveSidebarState />
       <AppSidebar />
-      <SidebarInset>
+      <SidebarInset className="min-w-0">
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b bg-background/88 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/72 md:hidden">
           <SidebarTrigger />
           <span className="font-heading text-sm">Riskfolio</span>

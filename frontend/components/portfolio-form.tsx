@@ -353,7 +353,11 @@ export function PortfolioForm() {
   const [syncStatus, setSyncStatus] = useState<string | null>(null)
   const [isSyncing, setIsSyncing] = useState(false)
   const [isSigningIn, setIsSigningIn] = useState(false)
+  const [initialCloudSyncState, setInitialCloudSyncState] = useState<
+    "pending" | "complete" | "failed"
+  >("pending")
   const syncedUserIdRef = useRef<string | null>(null)
+  const hasStartedPortfolioInitializationRef = useRef(false)
   const loadPortfolioRef = useRef<(portfolioId: string) => Promise<void>>(
     async () => {},
   )
@@ -409,7 +413,7 @@ export function PortfolioForm() {
 
   const syncPortfolios = useCallback(async () => {
     if (!supabase || !user) {
-      return
+      return false
     }
 
     setIsSyncing(true)
@@ -420,20 +424,27 @@ export function PortfolioForm() {
       const syncResult = await mirrorLocalAndCloudPortfolios(supabase, user.id)
       await refreshSavedPortfolios()
       setSyncStatus(getSyncMessage(syncResult))
+      return true
     } catch (err) {
       setSyncStatus(null)
       setAuthError(
         err instanceof Error ? err.message : "Failed to sync portfolios.",
       )
       syncedUserIdRef.current = null
+      return false
     } finally {
       setIsSyncing(false)
     }
   }, [refreshSavedPortfolios, supabase, user])
 
   useEffect(() => {
+    if (isAuthLoading) {
+      return
+    }
+
     if (!supabase || !user) {
       syncedUserIdRef.current = null
+      setInitialCloudSyncState("complete")
       return
     }
 
@@ -442,8 +453,11 @@ export function PortfolioForm() {
     }
 
     syncedUserIdRef.current = user.id
-    void syncPortfolios()
-  }, [supabase, syncPortfolios, user])
+    setInitialCloudSyncState("pending")
+    void syncPortfolios().then((succeeded) => {
+      setInitialCloudSyncState(succeeded ? "complete" : "failed")
+    })
+  }, [isAuthLoading, supabase, syncPortfolios, user])
 
   useEffect(() => {
     if (user) {
@@ -903,6 +917,29 @@ export function PortfolioForm() {
       handleSidebarPortfolioDelete,
     )
 
+    return () => {
+      window.removeEventListener(
+        PORTFOLIO_LOAD_EVENT,
+        handleSidebarPortfolioLoad,
+      )
+      window.removeEventListener(PORTFOLIO_NEW_EVENT, handleSidebarPortfolioNew)
+      window.removeEventListener(
+        PORTFOLIO_DELETE_EVENT,
+        handleSidebarPortfolioDelete,
+      )
+    }
+  }, [])
+
+  useEffect(() => {
+    if (
+      isAuthLoading ||
+      initialCloudSyncState === "pending" ||
+      hasStartedPortfolioInitializationRef.current
+    ) {
+      return
+    }
+
+    hasStartedPortfolioInitializationRef.current = true
     let cancelled = false
 
     void (async () => {
@@ -924,6 +961,13 @@ export function PortfolioForm() {
         if (portfolio) {
           setHasCachedPortfolios(true)
           await loadPortfolioRef.current(portfolio.id)
+        } else if (initialCloudSyncState === "failed" && user) {
+          // Do not create a sample that could later be uploaded alongside
+          // portfolios that were unavailable during the failed cloud sync.
+          setHasCachedPortfolios(true)
+          setEntries([createBlankEntry()])
+          setPortfolioName("")
+          setSaveStatus("Cloud portfolios could not be loaded.")
         } else {
           setHasCachedPortfolios(false)
         }
@@ -942,17 +986,8 @@ export function PortfolioForm() {
 
     return () => {
       cancelled = true
-      window.removeEventListener(
-        PORTFOLIO_LOAD_EVENT,
-        handleSidebarPortfolioLoad,
-      )
-      window.removeEventListener(PORTFOLIO_NEW_EVENT, handleSidebarPortfolioNew)
-      window.removeEventListener(
-        PORTFOLIO_DELETE_EVENT,
-        handleSidebarPortfolioDelete,
-      )
     }
-  }, [])
+  }, [initialCloudSyncState, isAuthLoading, user])
 
   const autosaveSnapshot = useMemo(() => {
     const holdings = entries
@@ -1912,8 +1947,8 @@ export function PortfolioForm() {
 
           {/* Portfolio Entries */}
           <div className="flex min-w-0 w-full flex-col gap-4">
-            <div className="max-w-full min-w-0 overflow-hidden pb-1">
-              <div className="min-w-0 space-y-2">
+            <div className="w-full max-w-full min-w-0 overflow-x-auto pb-1">
+              <div className="min-w-[64rem] space-y-2">
                 <div className="flex w-full items-center text-sm font-medium text-muted-foreground">
                   <div className="min-w-0 flex-1 px-1">Security</div>
                   <div className="w-1/12 px-1">Quantity</div>
