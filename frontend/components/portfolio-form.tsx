@@ -1338,8 +1338,9 @@ export function PortfolioForm() {
     return absoluteValue
   }
 
-  const formatPercent = (value: number) => {
-    return `${(value * 100).toFixed(2)}%`
+  const formatWeightPercent = (value: number) => {
+    const percentage = Number((value * 100).toFixed(1))
+    return percentage === 100 ? "100%" : `${percentage.toFixed(1)}%`
   }
 
   const formatSignedPercent = (value: number) => {
@@ -1401,7 +1402,7 @@ export function PortfolioForm() {
 
   const getEntryWeightLabel = (entryId: string) => {
     const weight = entryWeightEstimates.get(entryId)
-    return typeof weight === "number" ? formatPercent(weight) : "-"
+    return typeof weight === "number" ? formatWeightPercent(weight) : "-"
   }
 
   const getEntryMarketValue = (entry: PortfolioEntry) => {
@@ -1928,7 +1929,7 @@ export function PortfolioForm() {
                       </TooltipContent>
                     </Tooltip>
                   </div>
-                  <div className="w-1/16 px-1">Weight</div>
+                  <div className="w-1/12 px-1">Weight</div>
                   <div className="w-1/10 px-1">Market Value</div>
                   <div className="w-1/6 px-1">Day Move</div>
                   <div className="w-1/12 px-1">Day P&L</div>
@@ -2056,7 +2057,7 @@ export function PortfolioForm() {
                           </span>
                         </div>
                       </div>
-                      <div className="w-1/16 px-1">
+                      <div className="w-1/12 px-1">
                         <Input
                           readOnly
                           value={getEntryWeightLabel(entry.id)}
