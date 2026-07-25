@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -158,12 +159,13 @@ const CONFIDENCE_LEVEL_OPTIONS = [90, 95, 99] as const
 const DEFAULT_N_PORTFOLIOS = "5000"
 const DEFAULT_RISK_FREE_RATE = 0.05
 const AUTOSAVE_DELAY_MS = 900
-const STARTER_PORTFOLIO_NAME = "Starter 30/30/40 Portfolio"
-const STARTER_PORTFOLIO_VALUE = 100_000
-const STARTER_PORTFOLIO_ALLOCATIONS = [
-  { ticker: "GOOGL", weight: 0.3 },
-  { ticker: "TSLA", weight: 0.3 },
-  { ticker: "AAPL", weight: 0.4 },
+const NEW_PORTFOLIO_SELECT_VALUE = "__new_portfolio__"
+const STARTER_PORTFOLIO_NAME = "Sample Portfolio"
+const STARTER_PORTFOLIO_HOLDINGS = [
+  { ticker: "AAPL", quantity: 27 },
+  { ticker: "KO", quantity: 108 },
+  { ticker: "XOM", quantity: 58 },
+  { ticker: "JPM", quantity: 26 },
 ] as const
 
 function formatCacheTimestamp(value: string) {
@@ -230,10 +232,10 @@ function normalizeConfidenceLevel(value: number | null | undefined): number {
 }
 
 function createStarterEntries(): PortfolioEntry[] {
-  return STARTER_PORTFOLIO_ALLOCATIONS.map((allocation) => ({
-    id: `starter-${allocation.ticker}`,
-    ticker: allocation.ticker,
-    quantity: 0,
+  return STARTER_PORTFOLIO_HOLDINGS.map((holding) => ({
+    id: `starter-${holding.ticker}`,
+    ticker: holding.ticker,
+    quantity: holding.quantity,
     currentPrice: null,
     priceStatus: "loading",
   }))
@@ -294,11 +296,12 @@ function AnalysisPlaceholderCard({
 }
 
 export function PortfolioForm() {
+  const router = useRouter()
   const [entries, setEntries] = useState<PortfolioEntry[]>(createStarterEntries)
   const [confidenceLevel, setConfidenceLevel] = useState<number>(
     DEFAULT_CONFIDENCE_LEVEL,
   )
-  const [horizon, setHorizon] = useState<number>(22)
+  const [horizon, setHorizon] = useState<number>(5)
   const [nSimulations, setNSimulations] = useState<number>(10000)
   const [nPortfolios, setNPortfolios] = useState<string>(DEFAULT_N_PORTFOLIOS)
   const [isVarLoading, setIsVarLoading] = useState(false)
@@ -322,13 +325,20 @@ export function PortfolioForm() {
   const [stressVolatilityPercent, setStressVolatilityPercent] = useState(100)
   const [error, setError] = useState<string | null>(null)
   const [savedPortfolios, setSavedPortfolios] = useState<SavedPortfolio[]>([])
+  const [hasCachedPortfolios, setHasCachedPortfolios] = useState<
+    boolean | null
+  >(null)
+  const [
+    isPortfolioInitializationComplete,
+    setIsPortfolioInitializationComplete,
+  ] = useState(false)
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string | null>(
     null,
   )
   const [portfolioName, setPortfolioName] = useState(STARTER_PORTFOLIO_NAME)
-  const [saveStatus, setSaveStatus] = useState<string | null>(null)
+  const [, setSaveStatus] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
-  const [isAutosaving, setIsAutosaving] = useState(false)
+  const [, setIsAutosaving] = useState(false)
   const [userSettings, setUserSettings] = useState<UserSettings>(
     DEFAULT_USER_SETTINGS,
   )
@@ -344,7 +354,11 @@ export function PortfolioForm() {
   const [syncStatus, setSyncStatus] = useState<string | null>(null)
   const [isSyncing, setIsSyncing] = useState(false)
   const [isSigningIn, setIsSigningIn] = useState(false)
+  const [initialCloudSyncState, setInitialCloudSyncState] = useState<
+    "pending" | "complete" | "failed"
+  >("pending")
   const syncedUserIdRef = useRef<string | null>(null)
+  const hasStartedPortfolioInitializationRef = useRef(false)
   const loadPortfolioRef = useRef<(portfolioId: string) => Promise<void>>(
     async () => {},
   )
@@ -353,7 +367,6 @@ export function PortfolioForm() {
     async () => {},
   )
   const lastAutosaveKeyRef = useRef<string | null>(null)
-  const hasCheckedInitialPortfolioRef = useRef(false)
   const hasSeededStarterPortfolioRef = useRef(false)
 
   const createBlankEntry = (): PortfolioEntry => ({
@@ -366,7 +379,7 @@ export function PortfolioForm() {
 
   const refreshSavedPortfolios = useCallback(async () => {
     const portfolios = await portfolioDb.savedPortfolios
-      .orderBy("updatedAt")
+      .orderBy("lastAccessedAt")
       .reverse()
       .toArray()
 
@@ -401,7 +414,7 @@ export function PortfolioForm() {
 
   const syncPortfolios = useCallback(async () => {
     if (!supabase || !user) {
-      return
+      return false
     }
 
     setIsSyncing(true)
@@ -412,20 +425,27 @@ export function PortfolioForm() {
       const syncResult = await mirrorLocalAndCloudPortfolios(supabase, user.id)
       await refreshSavedPortfolios()
       setSyncStatus(getSyncMessage(syncResult))
+      return true
     } catch (err) {
       setSyncStatus(null)
       setAuthError(
         err instanceof Error ? err.message : "Failed to sync portfolios.",
       )
       syncedUserIdRef.current = null
+      return false
     } finally {
       setIsSyncing(false)
     }
   }, [refreshSavedPortfolios, supabase, user])
 
   useEffect(() => {
+    if (isAuthLoading) {
+      return
+    }
+
     if (!supabase || !user) {
       syncedUserIdRef.current = null
+      setInitialCloudSyncState("complete")
       return
     }
 
@@ -434,8 +454,11 @@ export function PortfolioForm() {
     }
 
     syncedUserIdRef.current = user.id
-    void syncPortfolios()
-  }, [supabase, syncPortfolios, user])
+    setInitialCloudSyncState("pending")
+    void syncPortfolios().then((succeeded) => {
+      setInitialCloudSyncState(succeeded ? "complete" : "failed")
+    })
+  }, [isAuthLoading, supabase, syncPortfolios, user])
 
   useEffect(() => {
     if (user) {
@@ -722,11 +745,13 @@ export function PortfolioForm() {
         nSimulations,
         createdAt: existingPortfolio?.createdAt ?? now,
         updatedAt: now,
+        lastAccessedAt: now,
       }
 
       await portfolioDb.savedPortfolios.put(portfolio)
       setSelectedPortfolioId(portfolio.id)
       setPortfolioName(portfolio.name)
+      router.replace(`/?portfolio=${encodeURIComponent(portfolio.id)}`)
       lastAutosaveKeyRef.current = getPortfolioSnapshotKey({
         holdings,
         name: portfolio.name,
@@ -768,6 +793,10 @@ export function PortfolioForm() {
       return
     }
 
+    const lastAccessedAt = new Date().toISOString()
+    await portfolioDb.savedPortfolios.update(portfolio.id, {
+      lastAccessedAt,
+    })
     setSelectedPortfolioId(portfolio.id)
     setPortfolioName(portfolio.name)
     setEntries(getEntriesFromPortfolio(portfolio))
@@ -795,6 +824,8 @@ export function PortfolioForm() {
     setStressVolatilityPercent(100)
     setError(null)
     setSaveStatus(`Loaded`)
+    router.replace(`/?portfolio=${encodeURIComponent(portfolio.id)}`)
+    await refreshSavedPortfolios()
   }
 
   loadPortfolioRef.current = handleLoadPortfolio
@@ -834,6 +865,7 @@ export function PortfolioForm() {
 
     if (selectedPortfolioId === portfolioId) {
       clearWorkingPortfolio()
+      router.replace("/")
     }
 
     setSaveStatus("Saved portfolio deleted.")
@@ -851,6 +883,7 @@ export function PortfolioForm() {
   const handleNewPortfolio = () => {
     clearWorkingPortfolio()
     setSaveStatus(null)
+    router.replace("/")
   }
 
   newPortfolioRef.current = handleNewPortfolio
@@ -886,18 +919,6 @@ export function PortfolioForm() {
       handleSidebarPortfolioDelete,
     )
 
-    const initialPortfolioId = new URLSearchParams(window.location.search).get(
-      "portfolio",
-    )
-
-    if (initialPortfolioId) {
-      void loadPortfolioRef.current(initialPortfolioId).finally(() => {
-        hasCheckedInitialPortfolioRef.current = true
-      })
-    } else {
-      hasCheckedInitialPortfolioRef.current = true
-    }
-
     return () => {
       window.removeEventListener(
         PORTFOLIO_LOAD_EVENT,
@@ -910,6 +931,65 @@ export function PortfolioForm() {
       )
     }
   }, [])
+
+  useEffect(() => {
+    if (
+      isAuthLoading ||
+      initialCloudSyncState === "pending" ||
+      hasStartedPortfolioInitializationRef.current
+    ) {
+      return
+    }
+
+    hasStartedPortfolioInitializationRef.current = true
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const initialPortfolioId = new URLSearchParams(
+          window.location.search,
+        ).get("portfolio")
+        const requestedPortfolio = initialPortfolioId
+          ? await portfolioDb.savedPortfolios.get(initialPortfolioId)
+          : null
+        const portfolio =
+          requestedPortfolio ??
+          (await portfolioDb.savedPortfolios.orderBy("lastAccessedAt").last())
+
+        if (cancelled) {
+          return
+        }
+
+        if (portfolio) {
+          setHasCachedPortfolios(true)
+          await loadPortfolioRef.current(portfolio.id)
+        } else if (initialCloudSyncState === "failed" && user) {
+          // Do not create a sample that could later be uploaded alongside
+          // portfolios that were unavailable during the failed cloud sync.
+          setHasCachedPortfolios(true)
+          setEntries([createBlankEntry()])
+          setPortfolioName("")
+          setSaveStatus("Cloud portfolios could not be loaded.")
+        } else {
+          setHasCachedPortfolios(false)
+        }
+      } catch {
+        if (!cancelled) {
+          // Avoid creating a duplicate if IndexedDB cannot be inspected.
+          setHasCachedPortfolios(true)
+          setSaveStatus("Unable to load cached portfolios.")
+        }
+      } finally {
+        if (!cancelled) {
+          setIsPortfolioInitializationComplete(true)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [initialCloudSyncState, isAuthLoading, user])
 
   const autosaveSnapshot = useMemo(() => {
     const holdings = entries
@@ -940,7 +1020,11 @@ export function PortfolioForm() {
   }, [confidenceLevel, entries, horizon, nSimulations, portfolioName])
 
   useEffect(() => {
-    if (!autosaveSnapshot) {
+    if (
+      !userSettings.autosaveEnabled ||
+      !isPortfolioInitializationComplete ||
+      !autosaveSnapshot
+    ) {
       return
     }
 
@@ -969,11 +1053,15 @@ export function PortfolioForm() {
             nSimulations,
             createdAt: existingPortfolio?.createdAt ?? now,
             updatedAt: now,
+            lastAccessedAt: existingPortfolio?.lastAccessedAt ?? now,
           }
 
           await portfolioDb.savedPortfolios.put(portfolio)
           lastAutosaveKeyRef.current = autosaveSnapshot.key
           setSelectedPortfolioId((current) => current ?? portfolio.id)
+          if (!selectedPortfolioId) {
+            router.replace(`/?portfolio=${encodeURIComponent(portfolio.id)}`)
+          }
 
           if (!portfolioName.trim()) {
             setPortfolioName(portfolio.name)
@@ -1009,12 +1097,15 @@ export function PortfolioForm() {
     autosaveSnapshot,
     confidenceLevel,
     horizon,
+    isPortfolioInitializationComplete,
     nSimulations,
     portfolioName,
     refreshSavedPortfolios,
+    router,
     selectedPortfolioId,
     supabase,
     user,
+    userSettings.autosaveEnabled,
   ])
 
   const buildStressTestRequest = useCallback(
@@ -1284,8 +1375,9 @@ export function PortfolioForm() {
     return absoluteValue
   }
 
-  const formatPercent = (value: number) => {
-    return `${(value * 100).toFixed(2)}%`
+  const formatWeightPercent = (value: number) => {
+    const percentage = Number((value * 100).toFixed(1))
+    return percentage === 100 ? "100%" : `${percentage.toFixed(1)}%`
   }
 
   const formatSignedPercent = (value: number) => {
@@ -1347,7 +1439,7 @@ export function PortfolioForm() {
 
   const getEntryWeightLabel = (entryId: string) => {
     const weight = entryWeightEstimates.get(entryId)
-    return typeof weight === "number" ? formatPercent(weight) : "-"
+    return typeof weight === "number" ? formatWeightPercent(weight) : "-"
   }
 
   const getEntryMarketValue = (entry: PortfolioEntry) => {
@@ -1574,72 +1666,96 @@ export function PortfolioForm() {
   useEffect(() => {
     if (
       hasSeededStarterPortfolioRef.current ||
-      !hasCheckedInitialPortfolioRef.current ||
+      !isPortfolioInitializationComplete ||
+      hasCachedPortfolios !== false ||
       selectedPortfolioId
     ) {
       return
     }
 
-    const starterTickers = STARTER_PORTFOLIO_ALLOCATIONS.map(
-      (allocation) => allocation.ticker,
-    )
-    const isStarterShape =
-      entries.length === STARTER_PORTFOLIO_ALLOCATIONS.length &&
-      starterTickers.every((ticker) =>
-        entries.some((entry) => entry.ticker.toUpperCase().trim() === ticker),
-      )
-
-    if (!isStarterShape) {
-      return
-    }
-
-    const ready = STARTER_PORTFOLIO_ALLOCATIONS.every((allocation) => {
-      const entry = entries.find(
-        (item) => item.ticker.toUpperCase().trim() === allocation.ticker,
-      )
-
-      return typeof entry?.currentPrice === "number" && entry.currentPrice > 0
-    })
-
-    if (!ready) {
-      return
-    }
-
-    const nextEntries = entries.map((entry) => {
-      const allocation = STARTER_PORTFOLIO_ALLOCATIONS.find(
-        (item) => item.ticker === entry.ticker.toUpperCase().trim(),
-      )
-
-      if (!allocation || !entry.currentPrice) {
-        return entry
-      }
-
-      return {
-        ...entry,
-        quantity: Number(
-          (
-            (STARTER_PORTFOLIO_VALUE * allocation.weight) /
-            entry.currentPrice
-          ).toFixed(6),
-        ),
-      }
-    })
-    const starterHoldings = nextEntries
-      .map((entry) => ({
-        ticker: entry.ticker.toUpperCase().trim(),
-        quantity: entry.quantity,
-      }))
-      .filter((holding) => holding.ticker && holding.quantity > 0)
+    const starterHoldings = STARTER_PORTFOLIO_HOLDINGS.map((holding) => ({
+      ticker: holding.ticker,
+      quantity: holding.quantity,
+    }))
 
     hasSeededStarterPortfolioRef.current = true
-    setEntries(nextEntries)
+    const now = new Date().toISOString()
+    const starterPortfolio: SavedPortfolio = {
+      id: createPortfolioId(),
+      name: STARTER_PORTFOLIO_NAME,
+      holdings: starterHoldings,
+      confidenceLevel,
+      horizon,
+      nSimulations,
+      createdAt: now,
+      updatedAt: now,
+      lastAccessedAt: now,
+    }
+    lastAutosaveKeyRef.current = getPortfolioSnapshotKey({
+      holdings: starterPortfolio.holdings,
+      name: starterPortfolio.name,
+      confidenceLevel: starterPortfolio.confidenceLevel,
+      horizon: starterPortfolio.horizon,
+      nSimulations: starterPortfolio.nSimulations,
+    })
+    setSelectedPortfolioId(starterPortfolio.id)
     setPortfolioName(STARTER_PORTFOLIO_NAME)
-    setSaveStatus("Loaded starter 30/30/40 portfolio.")
+    setSaveStatus("Saving Sample Portfolio...")
+    void portfolioDb.savedPortfolios
+      .put(starterPortfolio)
+      .then(async () => {
+        setHasCachedPortfolios(true)
+
+        if (supabase && user) {
+          try {
+            await upsertCloudPortfolio(supabase, user.id, starterPortfolio)
+            setSyncStatus("Sample Portfolio synced to cloud.")
+          } catch (syncError) {
+            setAuthError(
+              syncError instanceof Error
+                ? syncError.message
+                : "Failed to sync Sample Portfolio.",
+            )
+          }
+        }
+
+        await refreshSavedPortfolios()
+        router.replace(`/?portfolio=${encodeURIComponent(starterPortfolio.id)}`)
+        setSaveStatus("Saved Sample Portfolio.")
+      })
+      .catch((saveError) => {
+        lastAutosaveKeyRef.current = null
+        setSelectedPortfolioId((current) =>
+          current === starterPortfolio.id ? null : current,
+        )
+        setSaveStatus(
+          saveError instanceof Error
+            ? saveError.message
+            : "Failed to save Sample Portfolio.",
+        )
+      })
     void runAllAnalyses(starterHoldings)
-  }, [entries, runAllAnalyses, selectedPortfolioId])
+  }, [
+    confidenceLevel,
+    hasCachedPortfolios,
+    horizon,
+    isPortfolioInitializationComplete,
+    nSimulations,
+    refreshSavedPortfolios,
+    router,
+    runAllAnalyses,
+    selectedPortfolioId,
+    supabase,
+    user,
+  ])
 
   const isAnyAnalysisLoading =
     isVarLoading || isStressLoading || isOptimizerLoading
+  const isActivePortfolioSaved = Boolean(
+    selectedPortfolioId &&
+    autosaveSnapshot &&
+    lastAutosaveKeyRef.current === autosaveSnapshot.key,
+  )
 
   return (
     <form onSubmit={handleSubmit} className="min-w-0 space-y-6">
@@ -1655,9 +1771,53 @@ export function PortfolioForm() {
         </CardHeader>
         <CardContent className="min-w-0 space-y-6">
           <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
-            <div className="grid gap-4 xl:grid-cols-[minmax(18rem,0.75fr)_minmax(0,1fr)_auto] xl:items-end">
-              <div className="min-w-0 space-y-2">
-                <Label htmlFor="portfolio-name">Active portfolio</Label>
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:items-end 2xl:grid-cols-[minmax(18rem,1fr)_minmax(18rem,1fr)_auto]">
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="active-portfolio">Active portfolio</Label>
+                <Select
+                  value={selectedPortfolioId ?? NEW_PORTFOLIO_SELECT_VALUE}
+                  onValueChange={(portfolioId) => {
+                    if (portfolioId === NEW_PORTFOLIO_SELECT_VALUE) {
+                      handleNewPortfolio()
+                      return
+                    }
+
+                    void handleLoadPortfolio(portfolioId)
+                  }}
+                >
+                  <SelectTrigger id="active-portfolio" className="w-full">
+                    <SelectValue placeholder="Select a portfolio" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NEW_PORTFOLIO_SELECT_VALUE}>
+                      New portfolio
+                    </SelectItem>
+                    {savedPortfolios.map((portfolio) => (
+                      <SelectItem key={portfolio.id} value={portfolio.id}>
+                        {portfolio.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid min-w-0 gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="portfolio-name">Portfolio name</Label>
+                  <div
+                    className="flex shrink-0 items-center gap-1.5 text-xs font-medium"
+                    role="status"
+                  >
+                    <span
+                      className={`size-2 rounded-full ${
+                        isActivePortfolioSaved ? "bg-chart-3" : "bg-destructive"
+                      }`}
+                    />
+                    <span>
+                      {isActivePortfolioSaved ? "Saved" : "Not saved"}
+                    </span>
+                  </div>
+                </div>
                 <Input
                   id="portfolio-name"
                   placeholder="Untitled portfolio"
@@ -1667,42 +1827,7 @@ export function PortfolioForm() {
                 />
               </div>
 
-              <div className="grid gap-2 rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground sm:grid-cols-3">
-                <div>
-                  <p className="font-medium text-foreground">
-                    {selectedPortfolioId ? "Loaded" : "Draft"}
-                  </p>
-                  <p className="truncate" title={portfolioName || "Untitled"}>
-                    {portfolioName || "Untitled portfolio"}
-                  </p>
-                </div>
-                <div>
-                  <p className="font-medium text-foreground">Saved</p>
-                  <p>{savedPortfolios.length.toLocaleString()} portfolios</p>
-                </div>
-                <div>
-                  <p className="font-medium text-foreground">Status</p>
-                  <div
-                    className="flex min-w-0 items-center gap-2"
-                    role="status"
-                  >
-                    {isAutosaving ? (
-                      <Loader2 className="size-3.5 shrink-0 animate-spin" />
-                    ) : (
-                      <span className="size-2 shrink-0 rounded-full bg-chart-3" />
-                    )}
-                    <span className="truncate">
-                      {isAutosaving
-                        ? "Autosaving"
-                        : saveStatus
-                          ? saveStatus
-                          : "Autosave on"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 sm:flex xl:justify-end">
+              <div className="grid grid-cols-3 gap-2 sm:flex md:col-span-2 2xl:col-span-1 2xl:justify-end">
                 <Button
                   type="button"
                   variant="outline"
@@ -1822,20 +1947,20 @@ export function PortfolioForm() {
             <div className="flex items-start gap-2">
               <Info className="mt-0.5 size-4 text-primary" />
               <p>
-                Use US-listed or USD-quoted holdings only. Mixed currencies make
-                portfolio value and weights misleading.
+                Use securities quoted in the same currency. Mixed quote
+                currencies make portfolio value and weights misleading.
               </p>
             </div>
           </div>
 
           {/* Portfolio Entries */}
           <div className="flex min-w-0 w-full flex-col gap-4">
-            <div className="max-w-full min-w-0 overflow-hidden pb-1">
-              <div className="min-w-0 space-y-2">
-                <div className="grid w-full grid-cols-[10.5rem_4.5rem_11.25rem_4rem_6rem_6.5rem_6rem_2rem] gap-2 text-sm font-medium text-muted-foreground">
-                  <div>Security</div>
-                  <div>Quantity</div>
-                  <div className="flex items-center gap-1">
+            <div className="w-full max-w-full min-w-0 overflow-x-auto pb-1">
+              <div className="min-w-[64rem] space-y-2">
+                <div className="flex w-full items-center text-sm font-medium text-muted-foreground">
+                  <div className="min-w-0 flex-1 px-1">Security</div>
+                  <div className="w-1/12 px-1">Quantity</div>
+                  <div className="flex w-1/5 gap-1 px-1">
                     Current Price (USD)
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -1847,11 +1972,13 @@ export function PortfolioForm() {
                       </TooltipContent>
                     </Tooltip>
                   </div>
-                  <div>Weight</div>
-                  <div>Market Value</div>
-                  <div>Day Move</div>
-                  <div>Day P&L</div>
-                  <div />
+                  <div className="w-1/12 px-1">Weight</div>
+                  <div className="w-1/10 px-1">Market Value</div>
+                  <div className="w-1/6 px-1">Day Move</div>
+                  <div className="w-1/12 px-1">Day P&L</div>
+                  <div className="w-fit shrink-0 px-1">
+                    <div className="size-9" />
+                  </div>
                 </div>
 
                 {entries.map((entry) => {
@@ -1884,16 +2011,13 @@ export function PortfolioForm() {
                         : "text-muted-foreground"
 
                   return (
-                    <div
-                      key={entry.id}
-                      className="grid grid-cols-[10.5rem_4.5rem_11.25rem_4rem_6rem_6.5rem_6rem_2rem] gap-2"
-                    >
-                      <div>
-                        <InputGroup className="min-w-0 overflow-hidden">
+                    <div key={entry.id} className="flex w-full">
+                      <div className="min-w-0 flex-1 px-1">
+                        <InputGroup className="w-full min-w-0 overflow-hidden">
                           {entry.companyName && (
                             <InputGroupAddon
                               align="inline-start"
-                              className="min-w-0 max-w-[5.5rem] flex-none justify-start border-r px-2 text-left text-xs font-normal"
+                              className="w-2/3 min-w-0 flex-none justify-start border-r px-2 text-left text-xs font-normal"
                               title={[
                                 entry.companyName,
                                 entry.exchange,
@@ -1918,13 +2042,13 @@ export function PortfolioForm() {
                             }
                             className={`min-w-0 font-mono text-right uppercase md:px-2 ${
                               entry.companyName
-                                ? "ml-auto w-16 flex-none px-1.5"
+                                ? "ml-auto w-1/3 flex-none px-1.5"
                                 : "flex-1"
                             }`}
                           />
                         </InputGroup>
                       </div>
-                      <div>
+                      <div className="w-1/12 px-1">
                         <Input
                           type="number"
                           placeholder="0"
@@ -1941,81 +2065,92 @@ export function PortfolioForm() {
                           className="px-2"
                         />
                       </div>
-                      <div
-                        className={`flex h-9 min-w-0 items-center rounded-md border bg-background px-2 text-sm shadow-xs ${
-                          entry.priceStatus === "error"
-                            ? "border-destructive"
-                            : "border-input"
-                        }`}
-                        role="textbox"
-                        aria-readonly="true"
-                        aria-invalid={entry.priceStatus === "error"}
-                        title={priceStatus.title}
-                      >
-                        <span
-                          className={`shrink-0 whitespace-nowrap tabular-nums ${
-                            entry.currentPrice === null &&
-                            entry.priceStatus !== "loading"
-                              ? "text-muted-foreground"
-                              : ""
+                      <div className="w-1/5 px-1">
+                        <div
+                          className={`flex h-9 min-w-0 items-center rounded-md border bg-background px-2 text-sm shadow-xs ${
+                            entry.priceStatus === "error"
+                              ? "border-destructive"
+                              : "border-input"
                           }`}
-                        >
-                          {priceValue}
-                        </span>
-                        <span className="mx-2 h-4 w-px shrink-0 bg-border" />
-                        <span
-                          className={`ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] ${priceStatusClass}`}
+                          role="textbox"
+                          aria-readonly="true"
+                          aria-invalid={entry.priceStatus === "error"}
+                          title={priceStatus.title}
                         >
                           <span
-                            className={`size-1.5 shrink-0 rounded-full ${priceStatusDotClass}`}
-                          />
-                          <span className="whitespace-nowrap">
-                            {priceStatus.label}
+                            className={`shrink-0 whitespace-nowrap tabular-nums ${
+                              entry.currentPrice === null &&
+                              entry.priceStatus !== "loading"
+                                ? "text-muted-foreground"
+                                : ""
+                            }`}
+                          >
+                            {priceValue}
                           </span>
-                        </span>
+                          <span className="mx-2 h-4 w-px shrink-0 bg-border" />
+                          <span
+                            className={`ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] ${priceStatusClass}`}
+                          >
+                            <span
+                              className={`size-1.5 shrink-0 rounded-full ${priceStatusDotClass}`}
+                            />
+                            <span className="whitespace-nowrap">
+                              {priceStatus.label}
+                            </span>
+                          </span>
+                        </div>
                       </div>
-                      <Input
-                        readOnly
-                        value={getEntryWeightLabel(entry.id)}
-                        aria-label={`${entry.ticker || "Holding"} weight`}
-                        className="px-2 text-right text-sm tabular-nums"
-                      />
-                      <Input
-                        readOnly
-                        value={
-                          marketValue !== null
-                            ? formatCurrency(marketValue)
-                            : "-"
-                        }
-                        aria-label={`${entry.ticker || "Holding"} market value`}
-                        className="px-2 text-right text-sm tabular-nums"
-                      />
-                      <Input
-                        readOnly
-                        value={
-                          dayChange
-                            ? `${formatSignedCurrency(dayChange.amount)} (${formatSignedPercent(dayChange.percent)})`
-                            : "-"
-                        }
-                        aria-label={`${entry.ticker || "Holding"} day move`}
-                        className={`px-2 text-right text-sm tabular-nums ${dayChangeClass}`}
-                      />
-                      <Input
-                        readOnly
-                        value={
-                          dayChange ? formatSignedCurrency(dayChange.pnl) : "-"
-                        }
-                        aria-label={`${entry.ticker || "Holding"} day P&L`}
-                        className={`px-2 text-right text-sm tabular-nums ${dayChangeClass}`}
-                      />
-                      <div className="flex items-center">
+                      <div className="w-1/12 px-1">
+                        <Input
+                          readOnly
+                          value={getEntryWeightLabel(entry.id)}
+                          aria-label={`${entry.ticker || "Holding"} weight`}
+                          className="px-2 text-right text-sm tabular-nums"
+                        />
+                      </div>
+                      <div className="w-1/10 px-1">
+                        <Input
+                          readOnly
+                          value={
+                            marketValue !== null
+                              ? formatCurrency(marketValue)
+                              : "-"
+                          }
+                          aria-label={`${entry.ticker || "Holding"} market value`}
+                          className="px-2 text-right text-sm tabular-nums"
+                        />
+                      </div>
+                      <div className="w-1/6 px-1">
+                        <Input
+                          readOnly
+                          value={
+                            dayChange
+                              ? `${formatSignedCurrency(dayChange.amount)} (${formatSignedPercent(dayChange.percent)})`
+                              : "-"
+                          }
+                          aria-label={`${entry.ticker || "Holding"} day move`}
+                          className={`px-2 text-right text-sm tabular-nums ${dayChangeClass}`}
+                        />
+                      </div>
+                      <div className="w-1/12 px-1">
+                        <Input
+                          readOnly
+                          value={
+                            dayChange
+                              ? formatSignedCurrency(dayChange.pnl)
+                              : "-"
+                          }
+                          aria-label={`${entry.ticker || "Holding"} day P&L`}
+                          className={`px-2 text-right text-sm tabular-nums ${dayChangeClass}`}
+                        />
+                      </div>
+                      <div className="flex w-fit shrink-0 items-center px-1">
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
                           onClick={() => removeEntry(entry.id)}
                           disabled={entries.length === 1}
-                          className="w-full"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -2259,7 +2394,7 @@ export function PortfolioForm() {
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
                     <div className="rounded-lg bg-muted p-3">
                       <p className="text-xs text-muted-foreground">
                         Expected P&L
@@ -2445,7 +2580,7 @@ export function PortfolioForm() {
                       <div key={holding.ticker} className="space-y-3">
                         <div className="flex items-center justify-between gap-3">
                           <Label htmlFor={`shock-${holding.ticker}`}>
-                            {holding.ticker} price shock
+                            {holding.ticker} price volatility
                           </Label>
                           <span className="font-mono text-sm tabular-nums">
                             {shockValue > 0 ? "+" : ""}

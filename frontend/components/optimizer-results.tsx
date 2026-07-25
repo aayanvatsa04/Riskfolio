@@ -149,14 +149,19 @@ function PortfolioStatsCard({
     : []
 
   return (
-    <div className="space-y-3 rounded-lg border p-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Icon className={`h-4 w-4 ${accentColor}`} />
-          <p className="text-sm font-semibold leading-tight">{title}</p>
+    <div className="min-w-0 space-y-3 rounded-lg border p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Icon className={`size-4 shrink-0 ${accentColor}`} />
+          <p className="min-w-0 break-words text-sm font-semibold leading-tight">
+            {title}
+          </p>
         </div>
         {badge && (
-          <Badge variant="secondary" className="whitespace-nowrap text-xs">
+          <Badge
+            variant="secondary"
+            className="max-w-full whitespace-normal text-xs"
+          >
             {badge}
           </Badge>
         )}
@@ -233,7 +238,7 @@ export function OptimizerResults({ result }: { result: OptimizerResult }) {
           currentPortfolio={result.current_portfolio}
         />
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
           <PortfolioStatsCard
             title="Max Sharpe (Optimal)"
             icon={TrendingUp}
@@ -245,14 +250,14 @@ export function OptimizerResults({ result }: { result: OptimizerResult }) {
             title="Min Volatility"
             icon={TrendingDown}
             portfolio={result.min_vol_portfolio}
-            accentColor="text-blue-500"
+            accentColor="text-yellow-500"
             badge="Most stable"
           />
           <PortfolioStatsCard
             title="Your Portfolio"
             icon={Target}
             portfolio={result.current_portfolio}
-            accentColor="text-amber-500"
+            accentColor="text-blue-500"
           />
         </div>
 
@@ -265,11 +270,11 @@ export function OptimizerResults({ result }: { result: OptimizerResult }) {
             allocation with the highest Sharpe ratio - the most return per unit
             of risk achievable from{" "}
             <span className="font-medium text-foreground">{tickerList}</span>.
-            The <span className="font-medium text-blue-600">blue dot</span> is
-            the least volatile allocation. The{" "}
+            The <span className="font-medium text-yellow-600">yellow dot</span>{" "}
+            is the least volatile allocation. The{" "}
             <span className="font-medium text-red-600">red line</span> traces
             the analytical Markowitz frontier. Your current weighting is shown
-            in <span className="font-medium text-amber-600">amber</span> - if it
+            in <span className="font-medium text-blue-600">blue</span> - if it
             sits inside the frontier cloud, rebalancing could improve your
             risk-return profile without changing which stocks you hold.
           </p>

@@ -10,10 +10,12 @@ export type PriceRefreshIntervalMinutes =
 
 export type UserSettings = {
   priceRefreshIntervalMinutes: PriceRefreshIntervalMinutes
+  autosaveEnabled: boolean
 }
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   priceRefreshIntervalMinutes: DEFAULT_PRICE_REFRESH_INTERVAL_MINUTES,
+  autosaveEnabled: true,
 }
 
 function isPriceRefreshInterval(
@@ -41,6 +43,10 @@ function parseStoredSettings(rawValue: string | null): UserSettings {
       )
         ? parsed.priceRefreshIntervalMinutes
         : DEFAULT_USER_SETTINGS.priceRefreshIntervalMinutes,
+      autosaveEnabled:
+        typeof parsed.autosaveEnabled === "boolean"
+          ? parsed.autosaveEnabled
+          : DEFAULT_USER_SETTINGS.autosaveEnabled,
     }
   } catch {
     return DEFAULT_USER_SETTINGS

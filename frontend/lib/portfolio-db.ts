@@ -14,6 +14,7 @@ export interface SavedPortfolio {
   nSimulations: number
   createdAt: string
   updatedAt: string
+  lastAccessedAt: string
 }
 
 export interface HistoricalPriceRow {
@@ -71,6 +72,24 @@ class RiskfolioDatabase extends Dexie {
       priceResponses: "cacheKey, period, fetchedAt",
       analysisResponses: "cacheKey, analysisType, fetchedAt",
     })
+
+    this.version(4)
+      .stores({
+        savedPortfolios: "id, name, updatedAt, createdAt, lastAccessedAt",
+        priceResponses: "cacheKey, period, fetchedAt",
+        analysisResponses: "cacheKey, analysisType, fetchedAt",
+      })
+      .upgrade((transaction) =>
+        transaction
+          .table<SavedPortfolio, string>("savedPortfolios")
+          .toCollection()
+          .modify((portfolio) => {
+            portfolio.lastAccessedAt =
+              portfolio.lastAccessedAt ??
+              portfolio.updatedAt ??
+              portfolio.createdAt
+          }),
+      )
   }
 }
 
