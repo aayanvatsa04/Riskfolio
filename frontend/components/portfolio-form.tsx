@@ -2327,7 +2327,7 @@ export function PortfolioForm() {
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
                     <div className="rounded-lg bg-muted p-3">
                       <p className="text-xs text-muted-foreground">
                         Expected P&L
@@ -2513,7 +2513,7 @@ export function PortfolioForm() {
                       <div key={holding.ticker} className="space-y-3">
                         <div className="flex items-center justify-between gap-3">
                           <Label htmlFor={`shock-${holding.ticker}`}>
-                            {holding.ticker} price shock
+                            {holding.ticker} price volatility
                           </Label>
                           <span className="font-mono text-sm tabular-nums">
                             {shockValue > 0 ? "+" : ""}
