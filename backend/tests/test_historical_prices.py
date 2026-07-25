@@ -4,6 +4,7 @@ import asyncio
 
 import httpx
 import pandas as pd
+import pytest
 
 from app.engine import monte_carlo_var
 from app.main import app
@@ -15,7 +16,112 @@ async def _request(method: str, url: str, **kwargs) -> httpx.Response:
         return await client.request(method, url, **kwargs)
 
 
-def test_historical_prices_returns_serialized_price_rows(monkeypatch):
+def test_fetch_historical_prices_rejects_ticker_with_insufficient_history(
+    monkeypatch,
+):
+    """
+    Regression test for the SPCX scenario: a newly-IPO'd ticker with only
+    a handful of real trading days silently truncates the ENTIRE joint
+    dataset via dropna() (since dropna() removes any row where ANY
+    ticker is missing), producing statistically meaningless annualised
+    figures for every ticker in the portfolio, not just the thin one.
+    This confirms the guard catches it and names the actual culprit.
+    """
+    full_dates = pd.bdate_range(end="2026-07-17", periods=1_260)
+    recent_dates = full_dates[-6:]  # only 6 real trading days, like a fresh IPO
+
+    downloaded_prices = pd.DataFrame(
+        {
+            "AAPL": pd.Series([150.0] * 1_260, index=full_dates),
+            "GOOGL": pd.Series([120.0] * 1_260, index=full_dates),
+            "SPCX": pd.Series(
+                [150.0, 160.95, 155.0, 165.0, 158.0, 162.0], index=recent_dates
+            ),
+        }
+    )
+
+    def fake_download(tickers, period="5y", auto_adjust=True, progress=False):
+        return pd.concat({"Close": downloaded_prices}, axis=1)
+
+    monkeypatch.setattr("app.engine.monte_carlo_var.yf.download", fake_download)
+
+    with pytest.raises(ValueError, match="SPCX"):
+        monte_carlo_var.fetch_historical_prices(["AAPL", "GOOGL", "SPCX"], period="5y")
+
+
+def test_fetch_historical_prices_allows_sufficient_history_for_all_tickers(
+    monkeypatch,
+):
+    """Regression check: tickers that all have well over 252 trading days
+    must pass through with no error -- the guard should never produce a
+    false positive on a normal, well-established portfolio."""
+    full_dates = pd.bdate_range(end="2026-07-17", periods=1_260)
+    downloaded_prices = pd.DataFrame(
+        {
+            "AAPL": pd.Series([150.0] * 1_260, index=full_dates),
+            "GOOGL": pd.Series([120.0] * 1_260, index=full_dates),
+        }
+    )
+
+    def fake_download(tickers, period="5y", auto_adjust=True, progress=False):
+        return pd.concat({"Close": downloaded_prices}, axis=1)
+
+    monkeypatch.setattr("app.engine.monte_carlo_var.yf.download", fake_download)
+
+    prices = monte_carlo_var.fetch_historical_prices(["AAPL", "GOOGL"], period="5y")
+    assert len(prices) == 1_260
+
+
+def test_fetch_historical_prices_rejects_insufficient_overlap_without_naming_wrong_ticker(
+    monkeypatch,
+):
+    """
+    Rarer edge case: no SINGLE ticker is individually thin (both have
+    >= 252 trading days on their own), but their trading calendars barely
+    overlap -- e.g. one ticker's history is entirely before the other's
+    began. The guard must still catch this (the joint dropna() result is
+    still too short to analyse), but should use the honest "insufficient
+    overlap" message rather than incorrectly blaming one specific ticker
+    that isn't actually thin on its own.
+    """
+    # Ticker A: 300 trading days, entirely in 2021.
+    # Ticker B: 300 trading days, entirely in 2023 -- no calendar overlap.
+    dates_a = pd.bdate_range(start="2021-01-01", periods=300)
+    dates_b = pd.bdate_range(start="2023-01-01", periods=300)
+
+    downloaded_prices = pd.DataFrame(
+        {
+            "OLDCO": pd.Series([100.0] * 300, index=dates_a),
+            "NEWCO": pd.Series([50.0] * 300, index=dates_b),
+        }
+    )
+
+    def fake_download(tickers, period="5y", auto_adjust=True, progress=False):
+        return pd.concat({"Close": downloaded_prices}, axis=1)
+
+    monkeypatch.setattr("app.engine.monte_carlo_var.yf.download", fake_download)
+
+    with pytest.raises(ValueError, match="overlapping historical data"):
+        monte_carlo_var.fetch_historical_prices(["OLDCO", "NEWCO"], period="5y")
+
+
+def test_fetch_historical_prices_guard_does_not_apply_to_other_periods(monkeypatch):
+    """The stricter analysis-grade guard is scoped to period="5y" only
+    (the sole period actually used by the analysis engines). A request
+    for a short period (e.g. "5d", used only for quick price lookups)
+    must not trigger this check even with few rows."""
+    downloaded_prices = pd.DataFrame(
+        {"AAPL": [190.5, 191.25, 192.0]},
+        index=pd.bdate_range(end="2026-07-17", periods=3),
+    )
+
+    def fake_download(tickers, period="5d", auto_adjust=True, progress=False):
+        return pd.concat({"Close": downloaded_prices}, axis=1)
+
+    monkeypatch.setattr("app.engine.monte_carlo_var.yf.download", fake_download)
+
+    prices = monte_carlo_var.fetch_historical_prices(["AAPL"], period="5d")
+    assert len(prices) == 3
     calls = []
     monkeypatch.setattr("app.main._get_quote_currency", lambda _ticker: "USD")
 

@@ -21,13 +21,13 @@ Riskfolio is a web platform where users input their stock portfolio and the syst
 | Vectorized Monte Carlo Engine (10,000+ GBM simulations) | ✅ Complete |
 | Value at Risk (VaR) — 95% confidence interval | ✅ Complete |
 | Expected Shortfall (CVaR) — average tail loss | ✅ Complete |
-| MPT Optimizer — Efficient Frontier with Max Sharpe and Min Vol portfolios | ✅ Complete |
+| MPT Optimizer — Efficient Frontier with Max Sharpe and Min Vol portfolios, plus actionable buy/sell share targets (not just weight percentages) | ✅ Complete |
 | Analytical Efficient Frontier — exact frontier via `scipy.optimize` (SLSQP), plotted alongside the Monte Carlo cloud | ✅ Complete |
 | Stress Test Module — baseline vs. shocked VaR/CVaR under a hypothetical scenario (per-ticker price shocks + volatility multiplier) | ✅ Complete |
 | Monte Carlo Price Paths — interactive simulated price-path visualization | ✅ Complete |
 | Browser price caching — Dexie-backed quote response cache with stale fallback | ✅ Complete |
 | Optional cloud portfolio sync — Google OAuth via Supabase with local-first privacy | ✅ Complete |
-| Automated Pytest Suite, including Hypothesis property-based tests | ✅ Complete |
+| Automated Pytest Suite (120 tests, including Hypothesis property-based tests) | ✅ Complete |
 
 ---
 
@@ -63,7 +63,7 @@ Riskfolio/
 │   │       ├── monte_carlo_var.py   # Monte Carlo VaR engine + price-path simulation
 │   │       ├── mpt_optimizer.py     # MPT Efficient Frontier optimizer (Monte Carlo + analytical/SLSQP)
 │   │       └── stress_test.py       # Stress test engine (baseline vs. shocked VaR)
-│   ├── tests/                       # Pytest test suite
+│   ├── tests/                       # Pytest test suite (120 tests)
 │   ├── pyproject.toml               # uv project metadata and dependencies
 │   └── uv.lock                      # locked backend dependency graph
 ├── frontend/
@@ -88,11 +88,117 @@ Riskfolio/
 
 ## Getting Started
 
-### Step 1 — Install global prerequisites
+### Step 1 — Clone the repo
 
-These tools are installed once on your machine and used across all projects.
+```bash
+git clone https://github.com/aayanvatsa04/Riskfolio.git
+cd Riskfolio
+```
 
 ---
+
+### Step 2 — Create your local environment file
+
+```bash
+cp .env.example .env
+```
+
+The root `.env` stores local configuration used by Docker Compose and the
+frontend. Keep `.env.example` committed to the repo, but keep `.env` local —
+it is gitignored and should never be committed.
+
+Optional Supabase cloud sync uses public browser-safe variables:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+```
+
+The frontend also reads these values from the repo-root `.env` during local
+Next.js startup, so you do not need a second `.env.local` inside `frontend/`.
+If these values are absent, Riskfolio still works in local-only mode. Portfolio
+data remains in the user's browser and is not uploaded.
+
+To enable cloud portfolio sync, configure Google OAuth in Supabase Auth and add
+these redirect URLs:
+
+```text
+http://localhost:3000/auth/callback
+https://your-production-domain/auth/callback
+```
+
+Apply `supabase/migrations/20260724090000_create_portfolios.sql` to the
+Supabase project before using cloud sync. The migration creates the
+`public.portfolios` table and enables RLS so authenticated users can only
+access their own portfolios.
+
+---
+
+### Step 3 — Choose how you want to run the app
+
+Riskfolio can be run two ways — pick whichever suits you, then follow
+**only that section** below from top to bottom. Each option is fully
+self-contained and lists everything it needs, including any tool
+installs — you don't need to read the other option first.
+
+- **Option A — Docker Compose (recommended):** one command, one
+  terminal. Docker installs and manages all dependencies internally, so
+  this is the fastest path to a running app.
+- **Option B — Manual (two terminals):** runs the backend and frontend
+  directly on your machine, outside Docker. More visibility into each
+  service individually — useful if you're actively developing or
+  debugging one side.
+
+If you've already set up one option and want to try the other, that's
+completely fine — see the note under Option A for why there's no
+conflict either way.
+
+---
+
+## Running the App
+
+### Option A — Docker Compose (recommended)
+
+**Prerequisite:** Docker Desktop only.
+
+Download from https://www.docker.com/products/docker-desktop/ and
+install it like any desktop application.
+
+**You do NOT need `uv`, Node.js, or `pnpm` installed on your machine for
+this option** — Docker installs all backend and frontend dependencies
+inside its own containers automatically, via the `RUN uv sync` and
+`RUN pnpm install` steps already baked into `backend/Dockerfile` and
+`frontend/Dockerfile`.
+
+> **Already ran Option B's setup on your machine? No conflict.** The
+> backend Dockerfile installs packages to `/usr/local` inside the
+> container (not `/app/.venv`), so a host-side `.venv` is simply
+> unused. The frontend's `docker-compose.yml` uses dedicated named
+> volumes for `node_modules` and `.next`, which take priority over your
+> host folders — so the container always uses its own Linux-native
+> `node_modules`, never whatever's on your host. Either order is safe.
+
+Make sure Docker Desktop is open and running, then from the repo root:
+
+```bash
+docker compose up --build
+```
+
+This starts the frontend on port `3000` and backend on port `8000`. Open
+`http://localhost:3000` in your browser when the services are ready.
+
+To stop the stack:
+```bash
+docker compose down
+```
+
+---
+
+### Option B — Manual (two terminals)
+
+**Prerequisites:** `uv`, Node.js 22, and `pnpm`, installed directly on
+your machine (these are installed once and used across all your
+projects, not just this one).
 
 **uv** — Python package manager for the backend.
 
@@ -139,63 +245,7 @@ contributors on different global pnpm versions.
 
 ---
 
-**Docker Desktop** — optional, but recommended. Lets you run the entire app
-with a single command without managing two terminals.
-
-Download from https://www.docker.com/products/docker-desktop/ and install it
-like any desktop application.
-
----
-
-### Step 2 — Clone the repo
-
-```bash
-git clone https://github.com/aayanvatsa04/Riskfolio.git
-cd Riskfolio
-```
-
----
-
-### Step 3 — Create your local environment file
-
-```bash
-cp .env.example .env
-```
-
-The root `.env` stores local configuration used by Docker Compose and the
-frontend. Keep `.env.example` committed to the repo, but keep `.env` local —
-it is gitignored and should never be committed.
-
-Optional Supabase cloud sync uses public browser-safe variables:
-
-```bash
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
-```
-
-The frontend also reads these values from the repo-root `.env` during local
-Next.js startup, so you do not need a second `.env.local` inside `frontend/`.
-If these values are absent, Riskfolio still works in local-only mode. Portfolio
-data remains in the user's browser and is not uploaded.
-
-To enable cloud portfolio sync, configure Google OAuth in Supabase Auth and add
-these redirect URLs:
-
-```text
-http://localhost:3000/auth/callback
-https://your-production-domain/auth/callback
-```
-
-Apply `supabase/migrations/20260724090000_create_portfolios.sql` to the
-Supabase project before using cloud sync. The migration creates the
-`public.portfolios` table, removes the old price cache table, and enables RLS
-so authenticated users can only access their own portfolios.
-
----
-
-### Step 4 — Backend setup
-
-Run these from the `backend/` directory:
+**Backend setup.** Run these from the `backend/` directory:
 
 ```bash
 cd backend
@@ -213,8 +263,7 @@ palette (`Ctrl+Shift+P` on Windows/Linux, `Cmd+Shift+P` on Mac), run
 
 ---
 
-### Step 5 — Frontend setup
-
+**Frontend setup:**
 ```bash
 cd frontend
 pnpm install
@@ -222,29 +271,8 @@ pnpm install
 
 ---
 
-## Running the App
-
-### Option A — Docker Compose (recommended)
-
-Make sure Docker Desktop is open and running, then from the repo root:
-
-```bash
-docker compose up --build
-```
-
-This starts the frontend on port `3000` and backend on port `8000`. Open
-`http://localhost:3000` in your browser when the services are ready.
-
-To stop the stack:
-```bash
-docker compose down
-```
-
----
-
-### Option B — Manual (two terminals)
-
-Open two terminal windows simultaneously and run one command in each.
+**Now run both services.** Open two terminal windows simultaneously and
+run one command in each.
 
 **Terminal 1 — backend:**
 ```bash
@@ -278,6 +306,10 @@ matching the Vercel route prefix. In local development, Next rewrites
 
 ## Verifying the App is Working
 
+These checks work regardless of which option (A or B) you used above —
+they're just HTTP requests against the running backend, however it was
+started.
+
 Once running, confirm all endpoints respond:
 
 ```bash
@@ -306,6 +338,7 @@ curl -s http://localhost:8000/api/v1/optimize \
 
 | Method | Path | Purpose |
 |---|---|---|
+| `GET` | `/` | Root health check. Returns `{"status": "ok"}` to confirm the server is running |
 | `GET` | `/api/v1/health` | Health check |
 | `GET` | `/api/v1/historical-prices?tickers=AAPL&period=5d` | Fetch historical prices |
 | `POST` | `/api/v1/analyze` | Monte Carlo VaR analysis |
@@ -339,7 +372,13 @@ curl -s http://localhost:8000/api/v1/optimize \
 ```
 Returns both `frontier_points` (the Monte Carlo cloud) and
 `analytical_frontier_curve` (the exact frontier via `scipy.optimize`,
-same shape) so both can be plotted on the same chart.
+same shape) so both can be plotted on the same chart. Also returns
+`portfolio_value` and `holdings` (today's value and per-ticker detail,
+computed from live prices), plus `share_targets` on every portfolio
+point (Max Sharpe, Min Vol, and Current Portfolio) — a ready-to-render
+buy/sell breakdown per ticker (`target_shares`, `current_shares`,
+`delta_shares`), so the frontend never has to convert weight
+percentages into share counts itself.
 
 **Example `/api/v1/stress-test` payload:**
 ```json
@@ -359,6 +398,10 @@ results, identically shaped, for direct side-by-side comparison.
 
 ## Running Tests
 
+These commands run directly on your machine, not inside Docker — they
+require Option B's local `uv`/`pnpm` setup, even if you're running the
+actual app via Option A (Docker Compose).
+
 ```bash
 cd backend
 uv run pytest
@@ -376,6 +419,10 @@ pnpm run build
 ---
 
 ## Running the Engines Standalone
+
+These also run directly on your machine, not inside Docker — same
+requirement as "Running Tests" above: Option B's local `uv` setup, even
+if you're running the actual app via Option A (Docker Compose).
 
 Each engine can be run directly for development and debugging, printing a
 full human-readable report.
@@ -429,7 +476,7 @@ all contributors use identical package versions.
 | Practice | Implementation |
 |---|---|
 | Modular Architecture | Monte Carlo, MPT, and Stress Test engines strictly decoupled from the FastAPI layer |
-| Test-Driven Development (TDD) | 109-test Pytest suite (hand-written + Hypothesis property-based tests) covering all three engines, API endpoints, and data pipeline |
+| Test-Driven Development (TDD) | 119-test Pytest suite (hand-written + Hypothesis property-based tests) covering all three engines, API endpoints, and data pipeline |
 | Branch Protection & PR Workflow | All changes via feature branches and pull requests — direct pushes to main blocked |
 | Conventional Commits | Standardised commit message format enforced across the team |
 | Pre-commit Hooks | Ruff linter and formatter run automatically on every commit |
