@@ -9,7 +9,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 
-const EXTRA_LARGE_SCREEN_MEDIA_QUERY = "(min-width: 1280px)"
+const TWO_EXTRA_LARGE_SCREEN_MEDIA_QUERY = "(min-width: 1536px)"
 
 function ResponsiveSidebarState() {
   const { setOpen } = useSidebar()
@@ -20,7 +20,7 @@ function ResponsiveSidebarState() {
   }, [setOpen])
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia(EXTRA_LARGE_SCREEN_MEDIA_QUERY)
+    const mediaQuery = window.matchMedia(TWO_EXTRA_LARGE_SCREEN_MEDIA_QUERY)
     const syncSidebarState = () => setOpenRef.current(mediaQuery.matches)
 
     syncSidebarState()

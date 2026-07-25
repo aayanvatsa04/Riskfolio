@@ -159,6 +159,7 @@ const CONFIDENCE_LEVEL_OPTIONS = [90, 95, 99] as const
 const DEFAULT_N_PORTFOLIOS = "5000"
 const DEFAULT_RISK_FREE_RATE = 0.05
 const AUTOSAVE_DELAY_MS = 900
+const NEW_PORTFOLIO_SELECT_VALUE = "__new_portfolio__"
 const STARTER_PORTFOLIO_NAME = "Sample Portfolio"
 const STARTER_PORTFOLIO_HOLDINGS = [
   { ticker: "AAPL", quantity: 27 },
@@ -335,9 +336,9 @@ export function PortfolioForm() {
     null,
   )
   const [portfolioName, setPortfolioName] = useState(STARTER_PORTFOLIO_NAME)
-  const [saveStatus, setSaveStatus] = useState<string | null>(null)
+  const [, setSaveStatus] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
-  const [isAutosaving, setIsAutosaving] = useState(false)
+  const [, setIsAutosaving] = useState(false)
   const [userSettings, setUserSettings] = useState<UserSettings>(
     DEFAULT_USER_SETTINGS,
   )
@@ -864,6 +865,7 @@ export function PortfolioForm() {
 
     if (selectedPortfolioId === portfolioId) {
       clearWorkingPortfolio()
+      router.replace("/")
     }
 
     setSaveStatus("Saved portfolio deleted.")
@@ -1749,6 +1751,11 @@ export function PortfolioForm() {
 
   const isAnyAnalysisLoading =
     isVarLoading || isStressLoading || isOptimizerLoading
+  const isActivePortfolioSaved = Boolean(
+    selectedPortfolioId &&
+    autosaveSnapshot &&
+    lastAutosaveKeyRef.current === autosaveSnapshot.key,
+  )
 
   return (
     <form onSubmit={handleSubmit} className="min-w-0 space-y-6">
@@ -1764,9 +1771,53 @@ export function PortfolioForm() {
         </CardHeader>
         <CardContent className="min-w-0 space-y-6">
           <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
-            <div className="grid gap-4 xl:grid-cols-[minmax(18rem,0.75fr)_minmax(0,1fr)_auto] xl:items-end">
-              <div className="min-w-0 space-y-2">
-                <Label htmlFor="portfolio-name">Active portfolio</Label>
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:items-end 2xl:grid-cols-[minmax(18rem,1fr)_minmax(18rem,1fr)_auto]">
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="active-portfolio">Active portfolio</Label>
+                <Select
+                  value={selectedPortfolioId ?? NEW_PORTFOLIO_SELECT_VALUE}
+                  onValueChange={(portfolioId) => {
+                    if (portfolioId === NEW_PORTFOLIO_SELECT_VALUE) {
+                      handleNewPortfolio()
+                      return
+                    }
+
+                    void handleLoadPortfolio(portfolioId)
+                  }}
+                >
+                  <SelectTrigger id="active-portfolio" className="w-full">
+                    <SelectValue placeholder="Select a portfolio" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NEW_PORTFOLIO_SELECT_VALUE}>
+                      New portfolio
+                    </SelectItem>
+                    {savedPortfolios.map((portfolio) => (
+                      <SelectItem key={portfolio.id} value={portfolio.id}>
+                        {portfolio.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid min-w-0 gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="portfolio-name">Portfolio name</Label>
+                  <div
+                    className="flex shrink-0 items-center gap-1.5 text-xs font-medium"
+                    role="status"
+                  >
+                    <span
+                      className={`size-2 rounded-full ${
+                        isActivePortfolioSaved ? "bg-chart-3" : "bg-destructive"
+                      }`}
+                    />
+                    <span>
+                      {isActivePortfolioSaved ? "Saved" : "Not saved"}
+                    </span>
+                  </div>
+                </div>
                 <Input
                   id="portfolio-name"
                   placeholder="Untitled portfolio"
@@ -1776,50 +1827,7 @@ export function PortfolioForm() {
                 />
               </div>
 
-              <div className="grid gap-2 rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground sm:grid-cols-3">
-                <div>
-                  <p className="font-medium text-foreground">
-                    {selectedPortfolioId ? "Loaded" : "Draft"}
-                  </p>
-                  <p className="truncate" title={portfolioName || "Untitled"}>
-                    {portfolioName || "Untitled portfolio"}
-                  </p>
-                </div>
-                <div>
-                  <p className="font-medium text-foreground">Saved</p>
-                  <p>{savedPortfolios.length.toLocaleString()} portfolios</p>
-                </div>
-                <div>
-                  <p className="font-medium text-foreground">Status</p>
-                  <div
-                    className="flex min-w-0 items-center gap-2"
-                    role="status"
-                  >
-                    {isAutosaving ? (
-                      <Loader2 className="size-3.5 shrink-0 animate-spin" />
-                    ) : (
-                      <span
-                        className={`size-2 shrink-0 rounded-full ${
-                          userSettings.autosaveEnabled
-                            ? "bg-chart-3"
-                            : "bg-muted-foreground"
-                        }`}
-                      />
-                    )}
-                    <span className="truncate">
-                      {isAutosaving
-                        ? "Autosaving"
-                        : saveStatus
-                          ? saveStatus
-                          : userSettings.autosaveEnabled
-                            ? "Autosave on"
-                            : "Autosave off"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 sm:flex xl:justify-end">
+              <div className="grid grid-cols-3 gap-2 sm:flex md:col-span-2 2xl:col-span-1 2xl:justify-end">
                 <Button
                   type="button"
                   variant="outline"
@@ -1939,8 +1947,8 @@ export function PortfolioForm() {
             <div className="flex items-start gap-2">
               <Info className="mt-0.5 size-4 text-primary" />
               <p>
-                Use US-listed or USD-quoted holdings only. Mixed currencies make
-                portfolio value and weights misleading.
+                Use securities quoted in the same currency. Mixed quote
+                currencies make portfolio value and weights misleading.
               </p>
             </div>
           </div>
