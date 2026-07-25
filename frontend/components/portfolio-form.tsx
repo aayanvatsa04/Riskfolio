@@ -298,7 +298,7 @@ export function PortfolioForm() {
   const [confidenceLevel, setConfidenceLevel] = useState<number>(
     DEFAULT_CONFIDENCE_LEVEL,
   )
-  const [horizon, setHorizon] = useState<number>(22)
+  const [horizon, setHorizon] = useState<number>(5)
   const [nSimulations, setNSimulations] = useState<number>(10000)
   const [nPortfolios, setNPortfolios] = useState<string>(DEFAULT_N_PORTFOLIOS)
   const [isVarLoading, setIsVarLoading] = useState(false)
