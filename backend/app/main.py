@@ -274,10 +274,12 @@ def _build_share_targets(
             "action": action,
             "current_shares": current_shares,
             "target_shares": target_shares,
+            "delta_shares": share_delta,
             "shares_to_trade": shares_to_trade,
             "latest_price": latest_price,
             "current_weight": current_weight,
             "target_weight": target_weight,
+            "target_value": portfolio_value * target_weight,
         }
 
     return {
@@ -477,8 +479,6 @@ async def optimize_portfolio(request: OptimizeRequest) -> dict:
     try:
         # Reuse the exact same helper that /analyze uses to convert
         # (ticker, quantity) pairs into portfolio weights via live prices.
-        # _portfolio_value and _holdings are not needed by the optimizer
-        # (it only uses weights), so we prefix them with _ to signal that.
         portfolio_weights, portfolio_value, holdings = _build_weighted_portfolio(
             request.holdings
         )
@@ -496,14 +496,22 @@ async def optimize_portfolio(request: OptimizeRequest) -> dict:
 
         # Run the full MPT pipeline. verbose=False suppresses all print output —
         # the endpoint returns only the clean results dict as JSON.
-        optimization_result = run_mpt_optimization(
+        result = run_mpt_optimization(
             tickers=list(portfolio_weights.keys()),
             current_weights=portfolio_weights,
             n_portfolios=request.n_portfolios,
             risk_free_rate=request.risk_free_rate,
             verbose=False,
         )
-        return _attach_share_targets(optimization_result, holdings, portfolio_value)
+
+        # Enrich with today's portfolio value and per-ticker holdings detail
+        # (same shape as /analyze's response) so a consumer can compute an
+        # ACTIONABLE target -- e.g. "buy 3 more shares of AAPL" -- rather
+        # than only ever seeing target weights as bare percentages.
+        result["portfolio_value"] = portfolio_value
+        result["holdings"] = holdings
+
+        return _attach_share_targets(result, holdings, portfolio_value)
 
     except (AssertionError, ValueError) as exc:
         # AssertionError: from engine internal assertions (e.g. weight sum check)

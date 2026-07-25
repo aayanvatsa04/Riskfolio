@@ -5,7 +5,24 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.common import HoldingRequest
+from app.models.common import HoldingRequest, HoldingValuation
+
+
+class ShareTarget(BaseModel):
+    action: Literal["buy", "sell", "already_correct"]
+    current_shares: float
+    target_shares: float
+    delta_shares: float
+    shares_to_trade: float
+    latest_price: float
+    current_weight: float
+    target_weight: float
+    target_value: float
+
+
+class ShareTargets(BaseModel):
+    portfolio_value: float
+    shares: dict[str, ShareTarget]
 
 
 class PortfolioPoint(BaseModel):
@@ -14,21 +31,6 @@ class PortfolioPoint(BaseModel):
     sharpe: float
     weights: dict[str, float] | None = None
     share_targets: ShareTargets | None = None
-
-
-class ShareTarget(BaseModel):
-    action: Literal["buy", "sell", "already_correct"]
-    current_shares: float
-    target_shares: float
-    shares_to_trade: float
-    latest_price: float
-    current_weight: float
-    target_weight: float
-
-
-class ShareTargets(BaseModel):
-    portfolio_value: float
-    shares: dict[str, ShareTarget]
 
 
 class FrontierPoint(BaseModel):
@@ -98,4 +100,19 @@ class OptimizeResponse(BaseModel):
     current_portfolio: PortfolioPoint
     risk_free_rate: float
     n_portfolios: int
+    # Today's total portfolio value in USD, computed from live prices at
+    # request time (same value used to derive current_portfolio's weights).
+    # Combined with each target portfolio's `weights`, this is what lets a
+    # consumer compute an ACTIONABLE target: target_value = weight *
+    # portfolio_value, then target_shares = target_value / latest_price
+    # (see `holdings` below for latest_price per ticker) — without this,
+    # a caller only has percentages, not something a retail user can act
+    # on directly (e.g. "buy 3 more shares of AAPL").
+    portfolio_value: float
+    # Per-ticker current quantity, latest live price, market value, and
+    # weight — same shape as VaRResponse.holdings (see models/var.py) for
+    # consistency across every endpoint. Combined with portfolio_value and
+    # any target portfolio's weights above, this gives everything needed
+    # to compute a buy/sell share delta without a second API call.
+    holdings: list[HoldingValuation]
     timing: OptimizeTimingBreakdown | dict[str, Any]

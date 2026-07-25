@@ -585,6 +585,127 @@ def test_stress_test_reports_engine_failures(monkeypatch):
     assert "market data unavailable" in response.json()["detail"]
 
 
+def test_optimize_includes_portfolio_value_and_holdings(monkeypatch):
+    """
+    Regression test for a real gap: /optimize used to compute
+    portfolio_value and holdings internally (needed just to derive
+    current_portfolio's weights) but discarded both before returning,
+    leaving the frontend with only percentage weights -- not enough to
+    show a user something actionable like "buy 3 more shares of AAPL".
+    This confirms portfolio_value, holdings, AND the derived
+    share_targets (actionable buy/sell deltas, computed server-side via
+    compute_share_targets()) are all now present in the response.
+    """
+
+    def fake_fetch_historical_prices(_tickers, period="5y"):
+        return pd.DataFrame(
+            {"AAPL": [200.0, 202.0], "MSFT": [300.0, 305.0]},
+            index=pd.to_datetime(["2026-05-28", "2026-05-29"]),
+        )
+
+    def fake_run_mpt_optimization(**_kwargs):
+        return {
+            "tickers": ["AAPL", "MSFT"],
+            "frontier_points": [],
+            "analytical_frontier_curve": [],
+            "max_sharpe_portfolio": {
+                "expected_return": 0.18,
+                "volatility": 0.22,
+                "sharpe": 0.59,
+                "weights": {"AAPL": 0.7, "MSFT": 0.3},
+            },
+            "min_vol_portfolio": {
+                "expected_return": 0.12,
+                "volatility": 0.15,
+                "sharpe": 0.47,
+                "weights": {"AAPL": 0.4, "MSFT": 0.6},
+            },
+            "current_portfolio": {
+                "expected_return": 0.15,
+                "volatility": 0.18,
+                "sharpe": 0.5,
+                "weights": {"AAPL": 0.6, "MSFT": 0.4},
+            },
+            "risk_free_rate": 0.05,
+            "n_portfolios": 5_000,
+            "timing": {
+                "data_fetch_s": 0.01,
+                "log_returns_s": 0.001,
+                "statistics_s": 0.001,
+                "optimization_s": 0.01,
+                "analytical_frontier_s": 0.05,
+                "total_s": 0.072,
+            },
+        }
+
+    monkeypatch.setattr(
+        "app.main.fetch_historical_prices", fake_fetch_historical_prices
+    )
+    monkeypatch.setattr("app.main.run_mpt_optimization", fake_run_mpt_optimization)
+
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/api/v1/optimize",
+            json={
+                "holdings": [
+                    {"ticker": "AAPL", "quantity": 10},
+                    {"ticker": "MSFT", "quantity": 5},
+                ]
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    # portfolio_value must be present and correct: 10*202 + 5*305 = 3545.0
+    assert "portfolio_value" in body
+    assert body["portfolio_value"] == 3545.0
+
+    # holdings must be present with full per-ticker detail, matching the
+    # same shape /analyze already returns.
+    assert "holdings" in body
+    holdings_by_ticker = {h["ticker"]: h for h in body["holdings"]}
+    assert holdings_by_ticker["AAPL"]["quantity"] == 10.0
+    assert holdings_by_ticker["AAPL"]["latest_price"] == 202.0
+    assert holdings_by_ticker["AAPL"]["market_value"] == 2020.0
+    assert holdings_by_ticker["MSFT"]["quantity"] == 5.0
+    assert holdings_by_ticker["MSFT"]["latest_price"] == 305.0
+    assert holdings_by_ticker["MSFT"]["market_value"] == 1525.0
+
+    # share_targets must be populated on every portfolio point that has
+    # weights, using compute_share_targets() server-side -- so the
+    # frontend never has to do this math itself.
+    max_sharpe_targets = body["max_sharpe_portfolio"]["share_targets"]
+    assert max_sharpe_targets is not None
+    assert "AAPL" in max_sharpe_targets["shares"]
+    assert "MSFT" in max_sharpe_targets["shares"]
+    for ticker_result in max_sharpe_targets["shares"].values():
+        assert (
+            ticker_result["delta_shares"]
+            == ticker_result["target_shares"] - ticker_result["current_shares"]
+        )
+
+    # Self-consistency for current_portfolio's OWN math (target_shares -
+    # current_shares == delta_shares) is checked the same way as above.
+    # NOTE: we do NOT assert suggested_portfolio_value == portfolio_value
+    # here, since this test's current_portfolio.weights is hand-crafted
+    # mock data ({"AAPL": 0.6, "MSFT": 0.4}) that doesn't actually derive
+    # from the mocked prices -- that exact self-consistency guarantee
+    # (feeding a portfolio its own real weights recovers its own real
+    # value) is already rigorously covered at the engine level in
+    # test_optimizer.py::TestComputeShareTargets, using weights that
+    # genuinely match their holdings.
+    current_targets = body["current_portfolio"]["share_targets"]
+    assert current_targets is not None
+    for ticker_result in current_targets["shares"].values():
+        assert (
+            ticker_result["delta_shares"]
+            == ticker_result["target_shares"] - ticker_result["current_shares"]
+        )
+
+
 def test_unversioned_analyze_route_is_not_registered():
     response = asyncio.run(
         _request(
