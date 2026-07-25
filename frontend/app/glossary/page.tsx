@@ -12,6 +12,77 @@ export const metadata: Metadata = {
 
 const terms = [
   {
+    term: "Efficient Frontier",
+    fullName: "Best return for each risk level",
+    summary:
+      "The curve of portfolios that offer the highest expected return for a given level of volatility.",
+    context:
+      "Riskfolio plots the efficient frontier so you can see whether a portfolio sits near the best available risk-return tradeoff.",
+  },
+  {
+    term: "Analytical Frontier",
+    fullName: "Optimizer-calculated frontier",
+    summary:
+      "A frontier curve calculated directly from the portfolio optimizer rather than sampled from random portfolios.",
+    context:
+      "Riskfolio keeps the analytical frontier fully visible on the chart because it represents the modeled risk-return boundary.",
+  },
+  {
+    term: "Expected Annual Return",
+    fullName: "Projected yearly return",
+    summary: "The portfolio return estimate expressed as an annual percentage.",
+    context:
+      "Riskfolio uses expected annual return on the efficient-frontier chart's vertical axis.",
+  },
+  {
+    term: "Annual Volatility",
+    fullName: "Yearly return variability",
+    summary:
+      "A measure of how much portfolio returns are expected to fluctuate over a year.",
+    context:
+      "Riskfolio uses annual volatility on the efficient-frontier chart's horizontal axis as the main measure of risk.",
+  },
+  {
+    term: "Sharpe Ratio",
+    fullName: "Return per unit of risk",
+    summary:
+      "A risk-adjusted return metric that compares excess return with volatility.",
+    context:
+      "Riskfolio uses Sharpe ratio to identify the allocation with the strongest return per unit of volatility.",
+  },
+  {
+    term: "Max Sharpe Portfolio",
+    fullName: "Highest Sharpe allocation",
+    summary:
+      "The portfolio allocation with the highest Sharpe ratio among the optimizer's candidates.",
+    context:
+      "Riskfolio marks this point on the efficient-frontier chart as the modeled allocation with the best risk-adjusted return.",
+  },
+  {
+    term: "Min Volatility Portfolio",
+    fullName: "Lowest-risk allocation",
+    summary:
+      "The portfolio allocation with the lowest modeled volatility among the optimizer's candidates.",
+    context:
+      "Riskfolio marks this point so you can compare the lowest-risk allocation against the current and max-Sharpe portfolios.",
+  },
+  {
+    term: "Simulated Portfolio Cloud",
+    fullName: "Random allocation scatter plot",
+    summary:
+      "A scatter of randomly generated portfolios used to visualize possible risk-return combinations.",
+    context:
+      "Riskfolio shows thousands of simulated portfolios behind the analytical frontier to reveal the shape and density of the opportunity set.",
+  },
+  {
+    term: "Percentile Clipping",
+    fullName: "Robust chart scaling",
+    summary:
+      "A chart-scaling method that ignores the most extreme random scatter points when choosing axis limits.",
+    context:
+      "Riskfolio clips only the simulated portfolio cloud for axis scaling, while still fully including the analytical frontier, Max Sharpe, Min Volatility, and Your Portfolio markers.",
+  },
+  {
     term: "VaR",
     fullName: "Value at Risk",
     summary:
@@ -79,24 +150,30 @@ export default function GlossaryPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
             {terms.map((item) => (
-              <Card key={item.term} className="bg-card/88">
-                <CardHeader>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <CardTitle className="font-heading text-2xl">
-                      {item.term}
-                    </CardTitle>
-                    <Badge variant="outline">{item.fullName}</Badge>
-                  </div>
+              <Card
+                key={item.term}
+                className="flex h-full flex-col gap-0 bg-card/88 py-0"
+              >
+                <CardHeader className="gap-2 px-5 pb-3 pt-5">
+                  <CardTitle className="font-heading text-xl leading-tight">
+                    {item.term}
+                  </CardTitle>
+                  <Badge
+                    variant="outline"
+                    className="h-auto w-fit max-w-full whitespace-normal px-2 py-0.5 text-left text-[11px] leading-4"
+                  >
+                    {item.fullName}
+                  </Badge>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <p className="leading-7">{item.summary}</p>
-                  <div className="rounded-lg border bg-muted/50 p-4">
-                    <p className="mb-1 font-mono text-xs text-muted-foreground">
+                <CardContent className="flex flex-1 flex-col gap-4 px-5 pb-5 pt-0">
+                  <p className="text-sm leading-6">{item.summary}</p>
+                  <div className="mt-auto rounded-md border bg-muted/50 p-3.5">
+                    <p className="mb-1.5 font-mono text-[11px] tracking-wide text-muted-foreground">
                       IN RISKFOLIO
                     </p>
-                    <p className="leading-7 text-muted-foreground">
+                    <p className="text-sm leading-6 text-muted-foreground">
                       {item.context}
                     </p>
                   </div>
