@@ -1,0 +1,47 @@
+---
+title: Guest 2. Load quotes and display holdings
+config:
+  theme: default
+  themeCSS: |
+    text[y="-25"] {
+      font-size: 28px !important;
+      font-weight: 700 !important;
+      text-anchor: middle !important;
+    }
+---
+sequenceDiagram
+    autonumber
+
+    actor User
+    participant Browser as Next.js Client<br/>(Browser)
+    participant Dexie as Local Persistence<br/>(Dexie / IndexedDB)
+
+    box rgb(219, 234, 254) FastAPI
+        participant API as API Layer<br/>(Routes / Validation)
+        participant Engine as Engine Layer<br/>(Risk / Optimization)
+    end
+
+    participant YF as Yahoo Finance<br/>(via yfinance)
+
+    Note over User,Browser: Trigger: A portfolio becomes active<br/>from startup or user selection
+    User->>Browser: Open or select a portfolio
+    Browser->>Dexie: Read the active portfolio
+    Dexie-->>Browser: Return portfolio holdings
+
+    loop Each portfolio ticker
+        Browser->>Dexie: Read cached 5-day quote and metadata
+        alt Cached quote is fresh
+            Dexie-->>Browser: Return cached quote
+        else Quote is missing or stale
+            Dexie-->>Browser: Return cache miss or stale quote
+            Browser->>API: GET /api/v1/historical-prices
+            API->>Engine: Validate tickers and fetch prices
+            Engine->>YF: Download prices and metadata
+            YF-->>Engine: Market data
+            Engine-->>API: Normalized price rows
+            API-->>Browser: Historical-prices response
+            Browser->>Dexie: Cache quote response
+            Dexie-->>Browser: Cache write acknowledged
+        end
+        Browser-->>User: Show price, value, weight, and day movement
+    end

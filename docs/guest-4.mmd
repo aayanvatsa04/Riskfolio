@@ -1,0 +1,38 @@
+---
+config:
+  themeCSS: |
+    text[y="-25"] {
+      font-size: 28px !important;
+      font-weight: 700 !important;
+      font-family: Arial;
+      text-anchor: middle !important;
+    }
+title: Guest 4. Save portfolio changes
+---
+sequenceDiagram
+    autonumber
+
+    actor User
+    participant Browser as Next.js Client<br/>(Browser)
+    participant Dexie as Local Persistence<br/>(Dexie / IndexedDB)
+
+    Note over User,Browser: Trigger: User creates, renames,<br/>or edits a guest portfolio
+    Note over Browser,Dexie: Guest portfolios remain<br/>local to this browser
+
+    alt User creates a portfolio
+        User->>Browser: Create portfolio
+        Browser->>Dexie: Save the new portfolio
+        Dexie-->>Browser: Save acknowledged
+        Browser-->>User: Display the portfolio
+    else User renames or edits a portfolio
+        User->>Browser: Change portfolio data
+        alt Manual save
+            User->>Browser: Select Save
+            Browser->>Dexie: Save portfolio changes
+        else Autosave is enabled
+            Browser->>Browser: Wait for the autosave debounce
+            Browser->>Dexie: Save portfolio changes
+        end
+        Dexie-->>Browser: Save acknowledged
+        Browser-->>User: Show Saved
+    end

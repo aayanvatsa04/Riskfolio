@@ -1,0 +1,39 @@
+---
+title: Guest 1. Startup and portfolio selection
+config:
+  theme: default
+  themeCSS: |
+    text[y="-25"] {
+      font-size: 28px !important;
+      font-weight: 700 !important;
+      text-anchor: middle !important;
+    }
+---
+sequenceDiagram
+    autonumber
+
+    actor User
+    participant Browser as Next.js Client<br/>(Browser)
+    participant Auth as Supabase Auth
+    participant Dexie as Local Persistence<br/>(Dexie / IndexedDB)
+
+    Note over User,Browser: Trigger: User opens Riskfolio
+    User->>Browser: Open Riskfolio
+    Browser->>Auth: Check for an existing session
+    Auth-->>Browser: No authenticated session
+    Note over Browser,Auth: Guest mode makes no Supabase<br/>portfolio queries or writes
+
+    Browser->>Dexie: Open or create the Riskfolio database
+    Browser->>Dexie: Read the portfolio from ?portfolio=id,<br/>or the most recently accessed portfolio
+    Dexie-->>Browser: Matching portfolio or no result
+
+    alt A local portfolio exists
+        Browser->>Dexie: Update lastAccessedAt
+        Dexie-->>Browser: Update acknowledged
+        Browser-->>User: Display the local portfolio
+    else This browser has no saved portfolios
+        Browser->>Dexie: Save the default Sample Portfolio
+        Dexie-->>Browser: Sample saved
+        Browser->>Browser: Replace URL with ?portfolio=sample-id
+        Browser-->>User: Display the Sample Portfolio
+    end
