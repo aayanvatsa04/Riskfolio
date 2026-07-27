@@ -1,0 +1,52 @@
+---
+config:
+  theme: default
+  themeCSS: |
+    text[y="-25"] {
+      font-size: 28px !important;
+      font-weight: 700 !important;
+      font-family: Arial;
+      text-anchor: middle !important;
+    }
+title: Guest 3. Load and cache analyses
+---
+sequenceDiagram
+    autonumber
+
+    actor User
+    participant Browser as Next.js Client<br/>(Browser)
+    participant Dexie as Local Persistence<br/>(Dexie / IndexedDB)
+
+    box rgb(219, 234, 254) FastAPI
+        participant API as API Layer<br/>(Routes / Validation)
+        participant Engine as Engine Layer<br/>(Risk / Optimization)
+    end
+
+    participant YF as yfinance
+
+    Note over Browser,Dexie: Trigger: Active portfolio holdings are loaded
+    Browser->>Browser: Detect active portfolio holdings
+    Note over Browser,Dexie: Holdings trigger quote loading and<br/>analysis-cache lookup separately
+
+    Browser->>Dexie: Read by analysis type and<br/>stable request serialization
+    Dexie-->>Browser: Cached results or cache misses
+    Browser-->>User: Render cached results<br/>or analysis placeholders
+
+    opt First-run sample is created, or the user runs analyses
+        alt First-run Sample Portfolio
+            Browser->>Browser: Trigger all analyses automatically
+        else User-triggered analysis
+            User->>Browser: Click Run All Analyses
+        end
+        Browser->>API: POST /api/v1/analyze,<br/>/api/v1/stress-test, and /api/v1/optimize in parallel
+        API->>Engine: Validate requests and run<br/>the three analyses
+        Engine->>YF: Retrieve required current<br/>and historical prices
+        YF-->>Engine: Market data
+        Engine-->>API: VaR, stress-test, and<br/>optimizer results
+        API-->>Browser: JSON responses
+        Browser->>Dexie: Cache each analysis response
+        Dexie-->>Browser: Cache writes acknowledged
+        Browser-->>User: Render analysis results
+    end
+
+    Note over Browser,Dexie: Analysis responses remain in this browser

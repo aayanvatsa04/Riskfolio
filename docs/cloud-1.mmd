@@ -1,0 +1,33 @@
+---
+title: Cloud 1. Google sign-in and session creation
+config:
+  theme: default
+  themeCSS: |
+    text[y="-25"] {
+      font-size: 28px !important;
+      font-weight: 700 !important;
+      text-anchor: middle !important;
+    }
+---
+sequenceDiagram
+    autonumber
+
+    actor User
+    participant Browser as Next.js Client<br/>(Browser)
+    participant Next as Next.js Auth Callback<br/>(Server Route)
+    participant Google as Google OAuth
+    participant Supabase as Supabase<br/>(Auth / Postgres)
+
+    Note over User,Browser: Trigger: User chooses Google sign-in
+    User->>Browser: Select Sign in with Google
+    Browser->>Supabase: Start signInWithOAuth(provider: google)
+    Supabase-->>Browser: Redirect to Google
+    Browser->>Google: Authenticate and grant access
+    Google-->>Supabase: Return OAuth authorization
+    Supabase-->>Browser: Redirect to /auth/callback with code
+    Browser->>Next: GET /auth/callback?code=...
+    Next->>Supabase: Exchange code for session
+    Supabase-->>Next: Authenticated session
+    Next-->>Browser: Set session cookies and redirect to /
+    Browser->>Supabase: Read authenticated session
+    Supabase-->>Browser: Return signed-in user

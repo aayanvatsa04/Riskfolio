@@ -1,0 +1,41 @@
+---
+title: Cloud 3. Synchronize portfolio changes
+config:
+  theme: default
+  themeCSS: |
+    text[y="-25"] {
+      font-size: 28px !important;
+      font-weight: 700 !important;
+      text-anchor: middle !important;
+    }
+---
+sequenceDiagram
+    autonumber
+
+    actor User
+    participant Browser as Next.js Client<br/>(Browser)
+    participant Dexie as Local Persistence<br/>(Dexie / IndexedDB)
+    participant Supabase as Supabase<br/>(Auth / Postgres)
+
+    Note over User,Browser: Trigger: Signed-in user changes<br/>or deletes a portfolio
+    Note over Browser,Supabase: Applies after the user is authenticated<br/>and initial synchronization is complete
+
+    alt User creates, renames, or edits a portfolio
+        User->>Browser: Change portfolio data
+        Browser->>Dexie: Save local copy
+        Dexie-->>Browser: Local save acknowledged
+        Browser->>Supabase: Upsert cloud copy
+        Supabase-->>Browser: Cloud save acknowledged
+        Browser-->>User: Show Saved and sync status
+    else User deletes a portfolio
+        User->>Browser: Confirm deletion
+        Browser->>Dexie: Delete local copy
+        Dexie-->>Browser: Local deletion acknowledged
+        Browser->>Supabase: Delete cloud copy
+        Supabase-->>Browser: Cloud deletion acknowledged
+        Browser-->>User: Remove portfolio from the interface
+    end
+
+    Note over Browser,Dexie: Quotes and analysis responses remain local
+    Note over Browser,Supabase: Only saved portfolios synchronize to Supabase
+    Note over Browser: Market-data and analysis API flows are the same as guest mode

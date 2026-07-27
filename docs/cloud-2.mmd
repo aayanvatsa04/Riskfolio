@@ -1,0 +1,45 @@
+---
+title: Cloud 2. Initial portfolio synchronization
+config:
+  theme: default
+  themeCSS: |
+    text[y="-25"] {
+      font-size: 28px !important;
+      font-weight: 700 !important;
+      text-anchor: middle !important;
+    }
+---
+sequenceDiagram
+    autonumber
+
+    actor User
+    participant Browser as Next.js Client<br/>(Browser)
+    participant Supabase as Supabase<br/>(Auth / Postgres)
+    participant Dexie as Local Persistence<br/>(Dexie / IndexedDB)
+
+    Note over Browser,Supabase: Trigger: Browser receives an authenticated user<br/>after the OAuth callback
+    Browser->>Browser: Start initial cloud synchronization
+
+    par Read local portfolios
+        Browser->>Dexie: Read all saved portfolios
+        Dexie-->>Browser: Local portfolios
+    and Read cloud portfolios
+        Browser->>Supabase: Select the user's portfolios
+        Supabase-->>Browser: Cloud portfolios allowed by RLS
+    end
+
+    loop Each portfolio ID in the combined set
+        alt Portfolio exists only locally, or local updatedAt is newer
+            Browser->>Supabase: Upsert local portfolio
+            Supabase-->>Browser: Upsert acknowledged
+        else Portfolio exists only in the cloud, or cloud updatedAt is newer
+            Browser->>Dexie: Store cloud portfolio locally
+            Dexie-->>Browser: Write acknowledged
+        else Local and cloud updatedAt values are equal
+            Note over Browser: Leave both copies unchanged
+        end
+    end
+
+    Browser->>Dexie: Read the requested or most recently accessed portfolio
+    Dexie-->>Browser: Active portfolio
+    Browser-->>User: Display portfolio and cloud-sync status
