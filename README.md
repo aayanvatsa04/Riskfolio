@@ -16,20 +16,24 @@ Riskfolio is a web platform where users input their stock portfolio and the syst
 
 ## Features
 
-| Feature | Status |
-|---|---|
-| Vectorized Monte Carlo Engine (10,000+ GBM simulations) | ✅ Complete |
-| Value at Risk (VaR) — 95% confidence interval | ✅ Complete |
-| Expected Shortfall (CVaR) — average tail loss | ✅ Complete |
+| Feature                                                                                                                                         | Status      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| Vectorized Monte Carlo Engine (10,000+ GBM simulations)                                                                                         | ✅ Complete |
+| Value at Risk (VaR) — 95% confidence interval                                                                                                   | ✅ Complete |
+| Expected Shortfall (CVaR) — average tail loss                                                                                                   | ✅ Complete |
 | MPT Optimizer — Efficient Frontier with Max Sharpe and Min Vol portfolios, plus actionable buy/sell share targets (not just weight percentages) | ✅ Complete |
-| Analytical Efficient Frontier — exact frontier via `scipy.optimize` (SLSQP), plotted alongside the Monte Carlo cloud | ✅ Complete |
-| Stress Test Module — baseline vs. shocked VaR/CVaR under a hypothetical scenario (per-ticker price shocks + volatility multiplier) | ✅ Complete |
-| Monte Carlo Price Paths — interactive simulated price-path visualization | ✅ Complete |
-| Browser price caching — Dexie-backed quote response cache with stale fallback | ✅ Complete |
-| Optional cloud portfolio sync — Google OAuth via Supabase with local-first privacy | ✅ Complete |
-| Automated Pytest Suite (120 tests, including Hypothesis property-based tests) | ✅ Complete |
+| Analytical Efficient Frontier — exact frontier via `scipy.optimize` (SLSQP), plotted alongside the Monte Carlo cloud                            | ✅ Complete |
+| Stress Test Module — baseline vs. shocked VaR/CVaR under a hypothetical scenario (per-ticker price shocks + volatility multiplier)              | ✅ Complete |
+| Monte Carlo Price Paths — interactive simulated price-path visualization                                                                        | ✅ Complete |
+| Browser price caching — Dexie-backed quote response cache with stale fallback                                                                   | ✅ Complete |
+| Optional cloud portfolio sync — Google OAuth via Supabase with local-first privacy                                                              | ✅ Complete |
+| Automated Pytest Suite (120 tests, including Hypothesis property-based tests)                                                                   | ✅ Complete |
 
 ---
+
+## Architecture Overview
+
+![Architecture Overview](docs/arch.png)
 
 ## Tech Stack
 
@@ -188,6 +192,7 @@ This starts the frontend on port `3000` and backend on port `8000`. Open
 `http://localhost:3000` in your browser when the services are ready.
 
 To stop the stack:
+
 ```bash
 docker compose down
 ```
@@ -203,11 +208,13 @@ projects, not just this one).
 **uv** — Python package manager for the backend.
 
 Mac / Linux:
+
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 Windows (PowerShell):
+
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
@@ -219,10 +226,13 @@ After installing, close and reopen your terminal so `uv` is on your PATH.
 **Node.js 22** — JavaScript runtime required for the frontend.
 
 Mac / Linux — install via nvm (Node version manager):
+
 ```bash
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | sh
 ```
+
 Close and reopen your terminal, then:
+
 ```bash
 nvm install 22
 nvm use 22
@@ -233,6 +243,7 @@ Windows — download the Node.js 22 installer directly from https://nodejs.org a
 ---
 
 **pnpm** — frontend package manager, installed via Corepack which ships with Node:
+
 ```bash
 corepack enable
 corepack prepare pnpm@latest --activate
@@ -264,6 +275,7 @@ palette (`Ctrl+Shift+P` on Windows/Linux, `Cmd+Shift+P` on Mac), run
 ---
 
 **Frontend setup:**
+
 ```bash
 cd frontend
 pnpm install
@@ -275,23 +287,27 @@ pnpm install
 run one command in each.
 
 **Terminal 1 — backend:**
+
 ```bash
 cd backend
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Wait until you see:
+
 ```
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 ```
 
 **Terminal 2 — frontend:**
+
 ```bash
 cd frontend
 pnpm exec next dev --port 3000
 ```
 
 Wait until you see:
+
 ```
 ready - started server on http://localhost:3000
 ```
@@ -336,17 +352,18 @@ curl -s http://localhost:8000/api/v1/optimize \
 
 ## API Endpoints
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/` | Root health check. Returns `{"status": "ok"}` to confirm the server is running |
-| `GET` | `/api/v1/health` | Health check |
-| `GET` | `/api/v1/historical-prices?tickers=AAPL&period=5d` | Fetch historical prices |
-| `POST` | `/api/v1/analyze` | Monte Carlo VaR analysis |
-| `POST` | `/api/v1/optimize` | MPT Efficient Frontier optimization (Monte Carlo cloud + exact analytical frontier via SLSQP) |
-| `POST` | `/api/v1/monte-carlo-paths` | Simulated portfolio price paths over time |
-| `POST` | `/api/v1/stress-test` | Baseline vs. shocked VaR/CVaR under a hypothetical scenario |
+| Method | Path                                               | Purpose                                                                                       |
+| ------ | -------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `GET`  | `/`                                                | Root health check. Returns `{"status": "ok"}` to confirm the server is running                |
+| `GET`  | `/api/v1/health`                                   | Health check                                                                                  |
+| `GET`  | `/api/v1/historical-prices?tickers=AAPL&period=5d` | Fetch historical prices                                                                       |
+| `POST` | `/api/v1/analyze`                                  | Monte Carlo VaR analysis                                                                      |
+| `POST` | `/api/v1/optimize`                                 | MPT Efficient Frontier optimization (Monte Carlo cloud + exact analytical frontier via SLSQP) |
+| `POST` | `/api/v1/monte-carlo-paths`                        | Simulated portfolio price paths over time                                                     |
+| `POST` | `/api/v1/stress-test`                              | Baseline vs. shocked VaR/CVaR under a hypothetical scenario                                   |
 
 **Example `/api/v1/analyze` payload:**
+
 ```json
 {
   "holdings": [
@@ -360,6 +377,7 @@ curl -s http://localhost:8000/api/v1/optimize \
 ```
 
 **Example `/api/v1/optimize` payload:**
+
 ```json
 {
   "holdings": [
@@ -370,6 +388,7 @@ curl -s http://localhost:8000/api/v1/optimize \
   "risk_free_rate": 0.05
 }
 ```
+
 Returns both `frontier_points` (the Monte Carlo cloud) and
 `analytical_frontier_curve` (the exact frontier via `scipy.optimize`,
 same shape) so both can be plotted on the same chart. Also returns
@@ -381,6 +400,7 @@ buy/sell breakdown per ticker (`target_shares`, `current_shares`,
 percentages into share counts itself.
 
 **Example `/api/v1/stress-test` payload:**
+
 ```json
 {
   "holdings": [
@@ -391,6 +411,7 @@ percentages into share counts itself.
   "volatility_multiplier": 1.5
 }
 ```
+
 Returns `baseline` (unshocked) and `shocked` (scenario applied) VaR/CVaR
 results, identically shaped, for direct side-by-side comparison.
 
@@ -410,6 +431,7 @@ uv run ruff format --check .
 ```
 
 Frontend checks:
+
 ```bash
 cd frontend
 pnpm exec tsc --noEmit
@@ -428,18 +450,21 @@ Each engine can be run directly for development and debugging, printing a
 full human-readable report.
 
 **Monte Carlo VaR engine:**
+
 ```bash
 cd backend
 uv run python -m app.engine.monte_carlo_var
 ```
 
 **MPT optimizer engine:**
+
 ```bash
 cd backend
 uv run python -m app.engine.mpt_optimizer
 ```
 
 **Stress test engine:**
+
 ```bash
 cd backend
 uv run python -m app.engine.stress_test
@@ -456,14 +481,14 @@ uv run python -m app.engine.stress_test
 
 Run all commands from `backend/`.
 
-| Task | Command |
-|---|---|
-| Install all dependencies | `uv sync --group dev` |
-| Add a runtime dependency | `uv add package-name` |
-| Add a dev-only dependency | `uv add --dev package-name` |
-| Run a Python file or command | `uv run python path/to/file.py` |
-| Install pre-commit hooks | `uv run pre-commit install` |
-| Run all hooks manually | `uv run pre-commit run --all-files` |
+| Task                         | Command                             |
+| ---------------------------- | ----------------------------------- |
+| Install all dependencies     | `uv sync --group dev`               |
+| Add a runtime dependency     | `uv add package-name`               |
+| Add a dev-only dependency    | `uv add --dev package-name`         |
+| Run a Python file or command | `uv run python path/to/file.py`     |
+| Install pre-commit hooks     | `uv run pre-commit install`         |
+| Run all hooks manually       | `uv run pre-commit run --all-files` |
 
 `uv sync` creates `backend/.venv` automatically if it does not already exist.
 The `uv.lock` file pins exact dependency versions — commit it to the repo so
@@ -473,23 +498,23 @@ all contributors use identical package versions.
 
 ## Software Engineering Practices
 
-| Practice | Implementation |
-|---|---|
-| Modular Architecture | Monte Carlo, MPT, and Stress Test engines strictly decoupled from the FastAPI layer |
-| Test-Driven Development (TDD) | 124-test Pytest suite (hand-written + Hypothesis property-based tests) covering all three engines, API endpoints, and data pipeline |
-| Branch Protection & PR Workflow | All changes via feature branches and pull requests — direct pushes to main blocked |
-| Conventional Commits | Standardised commit message format enforced across the team |
-| Pre-commit Hooks | Ruff linter and formatter run automatically on every commit |
+| Practice                        | Implementation                                                                                                                      |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Modular Architecture            | Monte Carlo, MPT, and Stress Test engines strictly decoupled from the FastAPI layer                                                 |
+| Test-Driven Development (TDD)   | 124-test Pytest suite (hand-written + Hypothesis property-based tests) covering all three engines, API endpoints, and data pipeline |
+| Branch Protection & PR Workflow | All changes via feature branches and pull requests — direct pushes to main blocked                                                  |
+| Conventional Commits            | Standardised commit message format enforced across the team                                                                         |
+| Pre-commit Hooks                | Ruff linter and formatter run automatically on every commit                                                                         |
 
 ---
 
 ## Team
 
-| Member | Role |
-|---|---|
-| Aayan | Backend · Monte Carlo Engine · MPT Optimizer |
-| Yu Yang | Frontend · FastAPI Integration |
+| Member  | Role                                         |
+| ------- | -------------------------------------------- |
+| Aayan   | Backend · Monte Carlo Engine · MPT Optimizer |
+| Yu Yang | Frontend · FastAPI Integration               |
 
 ---
 
-*NUS Orbital 2026 — Apollo 11*
+_NUS Orbital 2026 — Apollo 11_
