@@ -412,6 +412,7 @@ export function PortfolioForm() {
   const hasSeededStarterPortfolioRef = useRef(false)
   const hasShownStarterPortfolioInfoRef = useRef(false)
   const duplicateTickerToastKeyRef = useRef<string | null>(null)
+  const priceRefreshesInFlightRef = useRef(new Set<string>())
   const [varResultRequestKey, setVarResultRequestKey] = useState<string | null>(
     null,
   )
@@ -649,6 +650,101 @@ export function PortfolioForm() {
     userSettings.priceRefreshIntervalMinutes,
   )
 
+  const refreshEntryPrice = useCallback(
+    async (entryId: string, ticker: string) => {
+      const normalizedTicker = ticker.toUpperCase().trim()
+
+      if (!normalizedTicker) {
+        return
+      }
+
+      const refreshKey = `${entryId}:${normalizedTicker}`
+
+      if (priceRefreshesInFlightRef.current.has(refreshKey)) {
+        return
+      }
+
+      priceRefreshesInFlightRef.current.add(refreshKey)
+
+      try {
+        const priceResult = await fetchHistoricalPricesWithCache({
+          tickers: [normalizedTicker],
+          period: "5d",
+          includeMetadata: true,
+        })
+        const latestRow = priceResult.data.rows?.at(-1)
+        const previousRow = priceResult.data.rows
+          ?.slice(0, -1)
+          .reverse()
+          .find(
+            (row) =>
+              typeof row.prices?.[normalizedTicker] === "number" &&
+              Number.isFinite(row.prices[normalizedTicker]),
+          )
+        const latestPrice = latestRow?.prices?.[normalizedTicker]
+        const previousClose = previousRow?.prices?.[normalizedTicker]
+        const metadata = priceResult.data.metadata?.[normalizedTicker]
+
+        if (typeof latestPrice !== "number" || !Number.isFinite(latestPrice)) {
+          throw new Error(`No current price found for ${normalizedTicker}`)
+        }
+
+        setEntries((currentEntries) =>
+          currentEntries.map((currentEntry) =>
+            currentEntry.id === entryId &&
+            currentEntry.ticker.toUpperCase().trim() === normalizedTicker
+              ? {
+                  ...currentEntry,
+                  companyName: metadata?.name ?? null,
+                  quoteCurrency: metadata?.currency ?? null,
+                  exchange: metadata?.exchange ?? null,
+                  currentPrice: latestPrice,
+                  previousClose:
+                    typeof previousClose === "number" &&
+                    Number.isFinite(previousClose)
+                      ? previousClose
+                      : null,
+                  priceStatus: "loaded",
+                  priceError: undefined,
+                  priceFetchedAt:
+                    priceResult.source === "stale-cache"
+                      ? new Date().toISOString()
+                      : priceResult.fetchedAt,
+                  priceSource: priceResult.source,
+                }
+              : currentEntry,
+          ),
+        )
+      } catch (err) {
+        setEntries((currentEntries) =>
+          currentEntries.map((currentEntry) =>
+            currentEntry.id === entryId &&
+            currentEntry.ticker.toUpperCase().trim() === normalizedTicker
+              ? {
+                  ...currentEntry,
+                  companyName: null,
+                  quoteCurrency: null,
+                  exchange: null,
+                  currentPrice: null,
+                  previousClose: null,
+                  priceStatus: "error",
+                  priceError:
+                    err instanceof Error
+                      ? err.message
+                      : "Failed to fetch price",
+                  priceFetchedAt: undefined,
+                  priceSource: undefined,
+                }
+              : currentEntry,
+          ),
+        )
+      } finally {
+        priceRefreshesInFlightRef.current.delete(refreshKey)
+      }
+    },
+    [],
+  )
+
   useEffect(() => {
     const now = Date.now()
     const timers = entries
@@ -676,84 +772,7 @@ export function PortfolioForm() {
             : 500
 
         return window.setTimeout(() => {
-          void (async () => {
-            try {
-              const priceResult = await fetchHistoricalPricesWithCache({
-                tickers: [ticker],
-                period: "5d",
-                includeMetadata: true,
-              })
-              const latestRow = priceResult.data.rows?.at(-1)
-              const previousRow = priceResult.data.rows
-                ?.slice(0, -1)
-                .reverse()
-                .find(
-                  (row) =>
-                    typeof row.prices?.[ticker] === "number" &&
-                    Number.isFinite(row.prices[ticker]),
-                )
-              const latestPrice = latestRow?.prices?.[ticker]
-              const previousClose = previousRow?.prices?.[ticker]
-              const metadata = priceResult.data.metadata?.[ticker]
-
-              if (
-                typeof latestPrice !== "number" ||
-                !Number.isFinite(latestPrice)
-              ) {
-                throw new Error(`No current price found for ${ticker}`)
-              }
-
-              setEntries((currentEntries) =>
-                currentEntries.map((currentEntry) =>
-                  currentEntry.id === entry.id &&
-                  currentEntry.ticker.toUpperCase().trim() === ticker
-                    ? {
-                        ...currentEntry,
-                        companyName: metadata?.name ?? null,
-                        quoteCurrency: metadata?.currency ?? null,
-                        exchange: metadata?.exchange ?? null,
-                        currentPrice: latestPrice,
-                        previousClose:
-                          typeof previousClose === "number" &&
-                          Number.isFinite(previousClose)
-                            ? previousClose
-                            : null,
-                        priceStatus: "loaded",
-                        priceError: undefined,
-                        priceFetchedAt:
-                          priceResult.source === "stale-cache"
-                            ? new Date().toISOString()
-                            : priceResult.fetchedAt,
-                        priceSource: priceResult.source,
-                      }
-                    : currentEntry,
-                ),
-              )
-            } catch (err) {
-              setEntries((currentEntries) =>
-                currentEntries.map((currentEntry) =>
-                  currentEntry.id === entry.id &&
-                  currentEntry.ticker.toUpperCase().trim() === ticker
-                    ? {
-                        ...currentEntry,
-                        companyName: null,
-                        quoteCurrency: null,
-                        exchange: null,
-                        currentPrice: null,
-                        previousClose: null,
-                        priceStatus: "error",
-                        priceError:
-                          err instanceof Error
-                            ? err.message
-                            : "Failed to fetch price",
-                        priceFetchedAt: undefined,
-                        priceSource: undefined,
-                      }
-                    : currentEntry,
-                ),
-              )
-            }
-          })()
+          void refreshEntryPrice(entry.id, ticker)
         }, refreshDelay)
       })
       .filter((timer): timer is number => timer !== null)
@@ -761,7 +780,37 @@ export function PortfolioForm() {
     return () => {
       timers.forEach((timer) => window.clearTimeout(timer))
     }
-  }, [entries, priceRefreshIntervalMs])
+  }, [entries, priceRefreshIntervalMs, refreshEntryPrice])
+
+  useEffect(() => {
+    const refreshStaleCachedPrices = () => {
+      if (document.visibilityState === "hidden") {
+        return
+      }
+
+      entries.forEach((entry) => {
+        const ticker = entry.ticker.toUpperCase().trim()
+
+        if (
+          !ticker ||
+          entry.priceStatus !== "loaded" ||
+          entry.priceSource !== "stale-cache"
+        ) {
+          return
+        }
+
+        void refreshEntryPrice(entry.id, ticker)
+      })
+    }
+
+    window.addEventListener("focus", refreshStaleCachedPrices)
+    document.addEventListener("visibilitychange", refreshStaleCachedPrices)
+
+    return () => {
+      window.removeEventListener("focus", refreshStaleCachedPrices)
+      document.removeEventListener("visibilitychange", refreshStaleCachedPrices)
+    }
+  }, [entries, refreshEntryPrice])
 
   const buildHoldingsRequest = (): PortfolioRequest["holdings"] | null => {
     const validEntries = entries.filter(
