@@ -61,5 +61,6 @@ class VaRResponse(BaseModel):
     n_simulations: int
     timing: TimingBreakdown | dict[str, Any]
     portfolio_value: float | None = None
+    portfolio_currency: str | None = None
     portfolio_weights: dict[str, float] | None = None
     holdings: list[HoldingValuation] | None = None

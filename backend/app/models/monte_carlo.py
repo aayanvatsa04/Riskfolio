@@ -67,6 +67,7 @@ class MonteCarloPathResponse(BaseModel):
     n_paths: int
     volatility_multiplier: float
     portfolio_value: float
+    portfolio_currency: str | None = None
     portfolio_weights: dict[str, float]
     summary: list[MonteCarloSummaryPoint]
     paths: list[MonteCarloSimulationPath]

@@ -1,98 +1,169 @@
-Here’s a ready-to-film 5-minute script for **Riskfolio**.
+# Riskfolio Frontend Walkthrough Script
 
-**Video Script**
+Target length: 5 minutes
 
-**0:00-0:25 — Opening Hook**
+Demo portfolio: use the built-in Sample Portfolio:
 
-**Visual:** Start on the Riskfolio homepage.
+## Recording Flow
 
-**Narration:**
-“Most retail investors know what they own, but not always how much risk they are actually taking. A portfolio can look diversified on the surface, but still be exposed to major losses if the market moves against it. Riskfolio helps everyday investors understand that risk clearly, using tools usually seen in professional finance.”
+### 0:00-0:20 - Opening
 
-**On screen:** Show the Riskfolio title and subtitle.
+Visual: Start on the dashboard with the Riskfolio title visible.
 
----
+Narration:
+"Riskfolio is a portfolio risk analysis app for everyday investors. The goal is to take a list of stock holdings and turn it into practical risk information: current portfolio value, downside-loss estimates, stress-test scenarios, and efficient-frontier optimization."
 
-**0:25-1:10 — What Riskfolio Does**
+Visual action: Slowly move from the page title down to the portfolio holdings panel.
 
-**Visual:** Slowly scroll through the main portfolio input screen.
+### 0:20-1:20 - Portfolio Setup And Local-First Workflow
 
-**Narration:**
-“Riskfolio is a web application for portfolio risk analysis and optimization. You enter the stocks you own, along with the number of shares, and Riskfolio estimates the current value of your portfolio using recent market prices. From there, you can run two types of analysis: downside risk analysis, which tells you how much you could lose in a bad market scenario, and efficient frontier optimization, which shows whether your current allocation is giving you a good balance between risk and return.”
+Visual: Show the sidebar, Active portfolio selector, portfolio name field, and New / Save / Delete buttons.
 
----
+Narration:
+"The main workflow starts with a portfolio. I can create a new portfolio, name it, save it, load a previously saved one from the dropdown or sidebar, and delete it when I no longer need it. Riskfolio is local-first, so portfolios stay in this browser by default instead of requiring an account before the app is usable."
 
-**1:10-2:00 — Entering a Portfolio**
+Visual action: type the demo holdings.
 
-**Visual:** Type example holdings such as `AAPL`, `MSFT`, `NVDA`, with quantities.
+Narration:
+"By keying in the ticker and share quantities, Riskfolio fetches the latest quote data fetched from Yahoo Finance API, and displays the relevant information about the stock in question."
 
-**Narration:**
-“Let’s start by entering a sample portfolio. I’ll add a few stock tickers and the number of shares held. As I type each ticker, Riskfolio automatically fetches the latest available price and estimates the position value. This means users do not have to manually calculate how much each holding is worth.”
+Narration:
+"We cache the prices of the ticker symbol in the browser's storage, so that the application does not make unecessary API calls. Users can change the refresh rates in the settings menu."
 
-**Visual:** Show estimated position value.
+Visual action: Show the estimated position value summary.
 
-**Narration:**
-“Riskfolio also lets users name, save, load, and delete portfolios locally, which makes it easy to come back later and rerun analysis without typing everything again. Behind the scenes, this is powered by Dexie, a lightweight browser database wrapper. In simple terms, Dexie stores saved portfolios directly on the user’s own device, inside their browser. That means sensitive portfolio drafts are not being uploaded just to save them, which helps protect user privacy and removes the need for a full login system for local portfolio storage. When the user chooses to run an analysis, only the holdings needed for that calculation are sent to the backend.”
+Narration:
+"At the bottom of the holdings table, the app totals the share count and estimated current market value when the loaded quotes share one currency. That value becomes the baseline for the risk analysis."
 
----
+### 1:20-1:45 - Optional Cloud Sync
 
-**2:00-3:10 — VaR Analysis**
+Visual: Show the local-only / cloud sync panel.
 
-**Visual:** Select “VaR analysis”. Choose 95% confidence, 22 days, 10,000 simulations. Click “Calculate VaR”.
+Narration:
+"Cloud sync is optional. If I stay signed out, portfolios remain local to this browser. If I choose to sign in with Google, Riskfolio can sync saved portfolios through Supabase so they are available across devices."
 
-**Narration:**
-“The first analysis mode is Value at Risk, or VaR. In simple terms, this answers the question: ‘In a bad month, how much money could this portfolio realistically lose?’”
+Visual action: Open the "Sign in to sync" dialog.
 
-“Here, I can choose the confidence level, the time horizon, and how many simulations to run. For example, I’ll use a 95% confidence level over one month with 10,000 simulations.”
+Narration:
+"This keeps the privacy story simple: the app works locally first, and cloud sync is an explicit choice."
 
-**Visual:** Show loading, then results.
+### 1:45-2:35 - Running All Analyses
 
-**Narration:**
-“Riskfolio then runs thousands of possible future portfolio outcomes based on historical price behavior. Instead of giving only one prediction, it gives a range of possible outcomes.”
+Visual: Scroll to the Analyses section.
 
-**Visual:** Zoom in on Value at Risk and Expected Shortfall cards.
+Narration:
+"The analysis section is split into three capabilities. First is Value at Risk, which estimates downside loss. Second is a stress test, where I can shock individual holdings and volatility. Third is the optimizer, which compares the current allocation against efficient alternatives."
 
-**Narration:**
-“The Value at Risk number shows the loss threshold in a bad-case scenario. The Expected Shortfall goes one step further and estimates the average loss if things are even worse than that threshold. So instead of only saying, ‘Your portfolio might fall,’ Riskfolio gives a clearer dollar estimate of what that downside could look like.”
+Visual action: Show the left-side controls.
 
----
+Narration:
+"For VaR, I can select a confidence level, choose the time horizon, and set the number of Monte Carlo simulations. For this demo, I will keep the default 95 percent confidence level, a one-week horizon, and 10,000 simulations."
 
-**3:10-3:55 — Simulation Chart**
+Visual action: Click "Run All Analyses".
 
-**Visual:** Show Monte Carlo simulation chart. Adjust path count, horizon, or volatility slider.
+Narration:
+"Clicking Run All Analyses sends the same portfolio through all three analysis modules, so the dashboard fills in as one complete risk report."
 
-**Narration:**
-“Below the summary, Riskfolio visualizes possible portfolio paths. Each line represents one possible future path the portfolio could take. The chart helps make risk more intuitive: you can see that outcomes spread out over time, and higher volatility creates a wider range of possible results.”
+Visual action: If useful, mention or point to the quote currency shown in the analysis details.
 
-“This is useful because investing risk is not just about average return. It is also about how uncomfortable the ride can get along the way.”
+Narration:
+"Riskfolio now validates the portfolio by quote currency instead of assuming everything is in US dollars. A portfolio can use USD, EUR, JPY, or another supported quote currency, but all holdings in one run need to share the same quote currency so the totals and risk numbers are meaningful."
 
----
+### 2:35-3:35 - Value At Risk Results
 
-**3:55-4:45 — Efficient Frontier Optimization**
+Visual: Focus on the Value at Risk Analysis card.
 
-**Visual:** Switch to “Efficient frontier”. Choose simulated portfolios, click “Run Optimization”.
+Narration:
+The first analysis is Value at Risk, one of the instruments we use to measure risk. It tells us how much the portfolio could lose in an unusually bad week, based on the simulations we ran.
 
-**Narration:**
-“The second analysis mode is efficient frontier optimization. This helps answer a different question: ‘Am I using my chosen stocks in the best possible proportions?’”
+For example, at a 95% confidence level, Riskfolio focuses on the worst 5% of simulated outcomes. So if the app says the one-week Value at Risk is $1,175, that means: in the simulation, there is a 5% chance the portfolio loses at least $1,175 over the next week.
 
-**Visual:** Show efficient frontier chart.
+In simpler terms, VaR gives us a realistic downside warning line. It does not predict exactly what will happen, but it helps answer the question: “If this portfolio has a bad week, how bad could that loss reasonably be?”
 
-**Narration:**
-“Riskfolio compares thousands of possible portfolio allocations using the same stocks. Each dot represents a different mix of weights. The chart shows the relationship between expected return and volatility.”
+Visual action: Point to Value at Risk and Expected Shortfall.
 
-**Visual:** Point to green, blue, and amber dots.
+Narration:
+"Expected Shortfall is the follow-up question. VaR tells us where the bad-loss line starts. Expected Shortfall looks past that line and asks: in those worst cases, how much do we lose on average? So it helps us understand not just when losses become serious, but how painful they could get."
 
-**Narration:**
-“The green dot highlights the portfolio with the strongest risk-return balance. The blue dot shows the most stable allocation. The amber dot shows the user’s current portfolio. This makes it easy to see whether rebalancing could improve the portfolio without changing the actual stocks owned.”
+Visual action: Move through Expected P&L, best case, worst case, standard deviation, and P&L range.
 
----
+Narration:
+"The supporting metrics show the simulated expected P&L, best case, worst case, standard deviation, and the overall P&L range. These numbers are shown in the portfolio's shared quote currency, helping the user understand both the central expectation and the spread of possible outcomes."
 
-**4:45-5:00 — Closing**
+### 3:35-4:20 - Monte Carlo Price Paths
 
-**Visual:** Return to full app view, showing both the input and results.
+Visual: Scroll to Monte Carlo Price Paths inside the VaR result.
 
-**Narration:**
-“Riskfolio brings professional-style portfolio risk tools into a simple interface for everyday investors. It helps users understand potential losses, compare possible outcomes, and make more informed allocation decisions. It does not tell you what to buy, and it is not financial advice, but it gives you a clearer picture of the risk already inside your portfolio.”
+Narration:
+"Riskfolio also includes an interactive Monte Carlo price-path view. Instead of only showing final risk metrics, it visualizes how the portfolio might move over time."
 
-**On-screen closing text:**
-“Riskfolio — Portfolio risk analysis for everyday investors.”
+Visual action: Adjust Paths, Volatility, or Horizon, then click "Run Paths".
+
+Narration:
+"I can control how many paths to draw, increase or decrease the volatility multiplier, and extend the horizon. The grey lines are individual simulated paths, while the summary lines show the mean and the 5th to 95th percentile range."
+
+Visual action: Hover on the chart tooltip.
+
+Narration:
+"Hovering the chart gives the mean, median, and percentile range for a selected trading day. This makes the uncertainty easier to interpret visually."
+
+### 4:20-5:15 - Stress Testing
+
+Visual: Move to Stress Scenario controls.
+
+Narration:
+"The stress test answers a different question: what happens if specific holdings are shocked and market volatility changes?"
+
+Visual action: Set example shocks, such as NVDA or AAPL down 10 percent if using those tickers; for the sample portfolio, set XOM down 8 percent and JPM down 5 percent. Increase global volatility to 1.50x. Click "Run Stress Test".
+
+Narration:
+"Here I can apply holding-level price shocks and then increase the global volatility multiplier. This is useful for scenario planning, such as testing a sector selloff or a more volatile market environment."
+
+Visual action: Show Baseline and Shocked cards side by side.
+
+Narration:
+"The output compares the baseline portfolio against the shocked scenario. The cards show metrics to measure risk, such as normal VaR, conditional VaR, and profit-and-loss standard deviation. The comparison makes it clear how a shock changes both current value and downside risk."
+
+### 5:15-6:10 - Efficient Frontier Optimizer
+
+Visual: Move to Optimizer Settings and output.
+
+Narration:
+"The optimizer looks at allocation quality. It uses the same tickers and simulates thousands of possible weight combinations, then compares those allocations against the current portfolio."
+
+Visual action: Show the Optimizer Portfolios selector and the efficient-frontier chart.
+
+Narration:
+"On the chart, the grey cloud shows random sampled portfolios. The red line is the analytical efficient frontier. Further right means more annual volatility, and higher up means more expected annual return."
+
+Visual action: Point to Max Sharpe, Min Volatility, and Your Portfolio markers.
+
+Narration:
+"The green marker is the max-Sharpe portfolio, which has the strongest return per unit of risk in the model. The yellow marker is the minimum-volatility allocation. The blue marker is the current portfolio. This helps the user see whether rebalancing could improve risk-adjusted return without changing the list of stocks."
+
+Visual action: Show the three allocation cards and rebalance plan.
+
+Narration:
+"Below the chart, Riskfolio turns the optimizer output into readable allocation cards. It shows return, volatility, Sharpe ratio, target weights, and a share-level rebalance plan, so the result is not just abstract percentages."
+
+### 6:10-6:40 - Glossary And Settings
+
+Visual: Use the sidebar to open Glossary.
+
+Narration:
+"Riskfolio also includes a glossary for the main finance terms used in the interface. This helps users understand concepts like VaR, CVaR, Sharpe ratio, volatility, and efficient frontier without leaving the app."
+
+Visual action: Open Settings.
+
+Narration:
+"The settings page controls market-data freshness and portfolio save behavior. Users can change the price refresh interval, clear cached quote data, toggle portfolio autosave, and wipe browser or cloud-saved portfolios separately. If the app had to show stale cached prices because the network was unavailable, it will automatically try to refresh those prices again when the user returns to the browser window."
+
+### 6:40-7:00 - Closing
+
+Visual: Return to the dashboard with the completed results visible.
+
+Narration:
+"Riskfolio brings together portfolio valuation, Monte Carlo downside analysis, stress testing, and efficient-frontier optimization in one local-first interface. It helps them understand the risk already inside their portfolio and make more informed allocation decisions."
+
+On-screen closing text:
+"Riskfolio - Portfolio risk analysis for everyday investors."

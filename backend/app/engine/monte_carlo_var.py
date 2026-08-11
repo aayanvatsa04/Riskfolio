@@ -8,7 +8,7 @@ Value at Risk (VaR) at 95% confidence.
 
 IMPORTANT — Portfolio Value Definition:
     portfolio_value refers to the CURRENT MARKET VALUE of the portfolio
-    — i.e. what your holdings are worth TODAY if you sold everything,
+    in its quote currency — i.e. what your holdings are worth TODAY if you sold everything,
     NOT the amount of cash you originally invested.
 
     Example: You invested $8,000 six months ago. Your holdings are
@@ -26,156 +26,12 @@ IMPORTANT — Portfolio Value Definition:
 import time
 
 import numpy as np
-import pandas as pd
-import yfinance as yf
 
-# This constant governs whether the TOTAL data actually available is
-# large enough to compute a statistically meaningful ANNUALISED figure.
-# A newly-IPO'd ticker with only a handful of real trading days will
-# always fail this check, since no cache can manufacture trading history.
-# 252 = one full trading year, matching the ×252 annualisation factor
-# used throughout this engine -- annualising from meaningfully less
-# than a year of data is where the ×252 multiplication starts amplifying
-# sampling noise into wildly unstable "annual" figures.
-MIN_TRADING_DAYS_FOR_ANALYSIS = 252
-
-# ─────────────────────────────────────────────
-# SECTION 1: DATA INGESTION
-# ─────────────────────────────────────────────
-
-
-def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFrame:
-    """
-    Download adjusted daily closing prices for a list of tickers
-    over the last 5 years using yfinance.
-
-    Returns a DataFrame where:
-        - Each column is a ticker (e.g. "AAPL", "TSLA")
-        - Each row is a trading day
-        - Values are the adjusted closing price in USD
-
-    'Adjusted' closing price accounts for stock splits and dividends,
-    so it gives a cleaner picture of true price history.
-    """
-    print(f"\n📥 Fetching 5-year historical data for: {tickers}...")
-
-    raw_data = yf.download(tickers, period=period, auto_adjust=True, progress=False)
-
-    if len(tickers) == 1:
-        prices = raw_data[["Close"]]
-        prices.columns = tickers
-    else:
-        prices = raw_data["Close"]
-
-    # Capture each ticker's OWN individual coverage BEFORE the joint
-    # dropna() below. This matters because dropna() drops any row where
-    # ANY ticker is missing a price -- so if one ticker (e.g. a stock
-    # that IPO'd last week) only has a handful of real trading days,
-    # the joint result gets truncated down to that tiny overlap for
-    # EVERY ticker in the request, not just the thin one. Recording the
-    # per-ticker counts now lets us name the actual culprit afterward,
-    # rather than just reporting "not enough data" with no explanation.
-    per_ticker_counts = prices.count()
-
-    prices = prices.dropna()
-
-    # Only meaningful for period="5y" (the default, and the only period
-    # actually used by any of the three analysis engines -- see the
-    # module docstring). The dedicated /historical-prices endpoint can
-    # request other periods (e.g. "5d" for a quick price lookup), where
-    # this stricter analysis-grade check does not apply.
-    if period == "5y" and len(prices) < MIN_TRADING_DAYS_FOR_ANALYSIS:
-        thin_tickers = [
-            ticker
-            for ticker in tickers
-            if per_ticker_counts.get(ticker, 0) < MIN_TRADING_DAYS_FOR_ANALYSIS
-        ]
-        if thin_tickers:
-            names = ", ".join(thin_tickers)
-            plural = "s" if len(thin_tickers) > 1 else ""
-            raise ValueError(
-                f"Insufficient historical data: {names} "
-                f"{'have' if len(thin_tickers) > 1 else 'has'} fewer than "
-                f"{MIN_TRADING_DAYS_FOR_ANALYSIS} trading days of price "
-                f"history (likely a recent IPO or newly-listed ticker{plural}). "
-                f"At least {MIN_TRADING_DAYS_FOR_ANALYSIS} trading days "
-                "(roughly one year) are required to compute statistically "
-                "meaningful annualised risk and return figures. Try "
-                "removing this ticker or waiting for more trading history "
-                "to accumulate."
-            )
-        # No single ticker is individually thin, but the tickers still
-        # don't share enough overlapping trading days -- a rarer edge
-        # case (e.g. mismatched trading calendars), but worth a distinct,
-        # honest message rather than pointing at a specific ticker that
-        # isn't actually the cause.
-        raise ValueError(
-            f"Insufficient overlapping historical data across {', '.join(tickers)}: "
-            f"only {len(prices)} trading days are common to all tickers, but at "
-            f"least {MIN_TRADING_DAYS_FOR_ANALYSIS} are required."
-        )
-
-    print(f"✅ Retrieved {len(prices)} trading days of data.\n")
-    return prices
-
-
-# ─────────────────────────────────────────────
-# SECTION 2: LOG RETURNS
-# ─────────────────────────────────────────────
-
-
-def compute_log_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    """
-    Convert daily prices into daily log returns.
-
-    Log return formula:
-        r_t = ln(P_t / P_{t-1})
-
-    Which is equivalent to:
-        r_t = ln(P_t) - ln(P_{t-1})
-
-    In pandas, .pct_change() gives simple returns (P_t/P_{t-1} - 1).
-    We use np.log(1 + simple_return) to convert to log returns,
-    which is equivalent to ln(P_t / P_{t-1}).
-
-    Why log returns?
-    - Time-additive: 5-day log return = sum of 5 daily log returns
-    - Approximately normally distributed (required for GBM)
-    - Handles compounding correctly
-    """
-    log_returns = np.log(1 + prices.pct_change())
-    log_returns = log_returns.dropna()
-    return log_returns
-
-
-# ─────────────────────────────────────────────
-# SECTION 3: STATISTICAL PARAMETERS
-# ─────────────────────────────────────────────
-
-
-def compute_statistics(log_returns: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Extract the two key statistical parameters from historical log returns:
-
-    1. Mean return vector (mu):
-       The average daily log return for each asset.
-       Shape: (n_assets,)
-       e.g. [0.0008, 0.0012, 0.0005] for 3 stocks
-
-    2. Covariance matrix (sigma):
-       Captures how much each pair of assets moves together.
-       Shape: (n_assets, n_assets)
-       - Diagonal entries = variance of each asset (solo volatility)
-       - Off-diagonal entries = covariance between pairs (co-movement)
-
-    The covariance matrix is the heart of multi-asset risk modeling.
-    A portfolio of highly correlated stocks is riskier than
-    a diversified one — sigma captures all of that.
-    """
-    mu = log_returns.mean().values
-    sigma = log_returns.cov().values
-    return mu, sigma
-
+from app.engine.data import (
+    compute_log_returns,
+    compute_statistics,
+    fetch_historical_prices,
+)
 
 # ─────────────────────────────────────────────
 # SECTION 4: CHOLESKY DECOMPOSITION
@@ -497,7 +353,7 @@ def explain_results(
 
 def run_var_analysis(
     portfolio: dict,  # e.g. {"AAPL": 0.5, "TSLA": 0.3, "GOOGL": 0.2}
-    portfolio_value: float,  # CURRENT MARKET VALUE in USD (what holdings are
+    portfolio_value: float,  # CURRENT MARKET VALUE in the quote currency (what holdings are
     # worth TODAY, not original investment)
     horizon: int = 1,  # trading days: 1, 5, or 22
     confidence_level: float = 0.95,
@@ -512,7 +368,7 @@ def run_var_analysis(
 
     Args:
         portfolio:         Dict of ticker -> weight. Weights must sum to 1.0.
-        portfolio_value:   Current market value of holdings in USD today.
+        portfolio_value:   Current market value of holdings in their quote currency today.
         horizon:           Time horizon in trading days (1, 5, or 22).
         confidence_level:  VaR confidence level (default 0.95 = 95%).
         n_simulations:     Number of Monte Carlo simulations (default 10,000).

@@ -11,11 +11,11 @@ THE CORE IDEA:
     "shocked" case) — and showing both results side by side.
 
     This module does not introduce any new risk mathematics. It reuses
-    monte_carlo_var.py's data pipeline (fetch_historical_prices,
-    compute_log_returns, compute_statistics), its Cholesky-based GBM
-    simulation (run_monte_carlo), and its VaR/CVaR extraction
-    (calculate_var) UNCHANGED. The only new logic here is how a
-    hypothetical "shock" is translated into different inputs for that
+    app.engine.data's data pipeline (fetch_historical_prices,
+    compute_log_returns, compute_statistics), monte_carlo_var.py's
+    Cholesky-based GBM simulation (run_monte_carlo), and its VaR/CVaR
+    extraction (calculate_var) UNCHANGED. The only new logic here is how
+    a hypothetical "shock" is translated into different inputs for that
     same, already-tested pipeline.
 
 TWO INDEPENDENT KINDS OF SHOCK:
@@ -53,14 +53,14 @@ import time
 
 import numpy as np
 
-# Reused, UNCHANGED, from the VaR engine — this module adds zero new
-# statistics or simulation code. See monte_carlo_var.py for the full
-# documentation of each of these.
-from app.engine.monte_carlo_var import (
-    calculate_var,
+# Reused, UNCHANGED, from the shared data pipeline.
+from app.engine.data import (
     compute_log_returns,
     compute_statistics,
     fetch_historical_prices,
+)
+from app.engine.monte_carlo_var import (
+    calculate_var,
     run_monte_carlo,
 )
 
@@ -109,7 +109,7 @@ def apply_price_shocks(
     Args:
         portfolio:      Dict of ticker -> weight (must sum to ~1.0), the
                         portfolio's weights BEFORE any shock.
-        portfolio_value: The portfolio's total value in USD BEFORE any
+        portfolio_value: The portfolio's total value in its quote currency BEFORE any
                         shock (today's actual market value).
         price_shocks:   Dict of ticker -> shock, e.g. {"AAPL": -0.15}
                         means AAPL's position instantly loses 15% of its
@@ -123,7 +123,7 @@ def apply_price_shocks(
         Tuple of (shocked_weights, shocked_portfolio_value):
             shocked_weights:       Dict of ticker -> NEW weight, summing
                                    to 1.0, reflecting the shock.
-            shocked_portfolio_value: The NEW total portfolio value in USD.
+            shocked_portfolio_value: The NEW total portfolio value in the quote currency.
 
     Raises:
         ValueError: If the combined shocks reduce the total portfolio
@@ -212,7 +212,7 @@ def run_stress_test_analysis(
         portfolio:          Dict of ticker -> weight, current (unshocked)
                             portfolio weights. Must sum to ~1.0.
         portfolio_value:    Current (unshocked) total portfolio value in
-                            USD.
+                            the portfolio's quote currency.
         price_shocks:       Dict of ticker -> instantaneous price shock,
                             e.g. {"AAPL": -0.15}. Defaults to no shocks
                             for any ticker if omitted.

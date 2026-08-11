@@ -29,6 +29,8 @@ export interface OptimizerResult {
   current_portfolio: PortfolioPoint
   risk_free_rate: number
   n_portfolios: number
+  portfolio_value?: number
+  portfolio_currency?: string | null
 }
 
 type ShareTargetAction = "buy" | "sell" | "already_correct"
@@ -45,6 +47,7 @@ type ShareTarget = {
 
 type ShareTargets = {
   portfolio_value: number
+  portfolio_currency?: string | null
   shares: Record<string, ShareTarget>
 }
 

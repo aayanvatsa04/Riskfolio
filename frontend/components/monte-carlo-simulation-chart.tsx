@@ -16,12 +16,8 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  getAnalysisCacheKey,
-  readCachedAnalysisResponse,
-  writeCachedAnalysisResponse,
-} from "@/lib/analysis-cache"
 import { apiUrl } from "@/lib/api"
+import { formatCurrencyValue } from "@/lib/currency"
 
 const pathColor = "var(--muted-foreground)"
 const downsideColor = "var(--chart-5)"
@@ -58,6 +54,7 @@ type SimulationResponse = {
   n_paths: number
   volatility_multiplier: number
   portfolio_value: number
+  portfolio_currency?: string | null
   summary: SummaryPoint[]
   paths: SimulationPath[]
 }
@@ -71,6 +68,7 @@ type TooltipPayloadItem = {
 type SimulationTooltipProps = {
   active?: boolean
   payload?: TooltipPayloadItem[]
+  currency?: string | null
 }
 
 type MonteCarloSimulationChartProps = {
@@ -83,25 +81,19 @@ type ApiErrorDetail = {
   message?: string
 }
 
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0,
-})
-
-const compactCurrencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  notation: "compact",
-  maximumFractionDigits: 1,
-})
-
-function formatCurrency(value: number) {
-  return currencyFormatter.format(value)
+function getRequestKey(request: unknown) {
+  return JSON.stringify(request)
 }
 
-function formatCompactCurrency(value: number) {
-  return compactCurrencyFormatter.format(value)
+function formatCurrency(value: number, currency?: string | null) {
+  return formatCurrencyValue(value, currency, { maximumFractionDigits: 0 })
+}
+
+function formatCompactCurrency(value: number, currency?: string | null) {
+  return formatCurrencyValue(value, currency, {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  })
 }
 
 async function getErrorMessage(response: Response) {
@@ -122,7 +114,11 @@ async function getErrorMessage(response: Response) {
   return `Server error: ${response.status}`
 }
 
-function SimulationTooltip({ active, payload }: SimulationTooltipProps) {
+function SimulationTooltip({
+  active,
+  payload,
+  currency,
+}: SimulationTooltipProps) {
   if (!active || !payload?.length) {
     return null
   }
@@ -137,19 +133,20 @@ function SimulationTooltip({ active, payload }: SimulationTooltipProps) {
       <p className="text-muted-foreground">
         Mean:{" "}
         <span className="font-medium text-foreground">
-          {formatCurrency(row.mean)}
+          {formatCurrency(row.mean, currency)}
         </span>
       </p>
       <p className="text-muted-foreground">
         Median:{" "}
         <span className="font-medium text-foreground">
-          {formatCurrency(row.p50)}
+          {formatCurrency(row.p50, currency)}
         </span>
       </p>
       <p className="text-muted-foreground">
         5%-95% range:{" "}
         <span className="font-medium text-foreground">
-          {formatCurrency(row.p05)} to {formatCurrency(row.p95)}
+          {formatCurrency(row.p05, currency)} to{" "}
+          {formatCurrency(row.p95, currency)}
         </span>
       </p>
     </div>
@@ -168,6 +165,7 @@ export function MonteCarloSimulationChart({
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const skeletonClass = isLoading ? "" : "animate-none bg-muted/70"
+  const currency = data?.portfolio_currency
 
   const holdingsKey = useMemo(() => JSON.stringify(holdings), [holdings])
   const requestHoldings = useMemo(
@@ -189,32 +187,9 @@ export function MonteCarloSimulationChart({
     [horizon, pathCount, requestHoldings, volatilityPercent],
   )
   const simulationRequestKey = useMemo(
-    () => getAnalysisCacheKey("monte-carlo-paths", simulationRequest),
+    () => getRequestKey(simulationRequest),
     [simulationRequest],
   )
-
-  useEffect(() => {
-    let cancelled = false
-
-    void readCachedAnalysisResponse<SimulationResponse>(
-      "monte-carlo-paths",
-      simulationRequest,
-    ).then((cached) => {
-      if (cancelled) {
-        return
-      }
-
-      if (cached) {
-        setData(cached.response)
-        setDataRequestKey(simulationRequestKey)
-        setError(null)
-      }
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [simulationRequest, simulationRequestKey])
 
   const runSimulation = async () => {
     setIsLoading(true)
@@ -234,11 +209,6 @@ export function MonteCarloSimulationChart({
       }
 
       const nextData = (await response.json()) as SimulationResponse
-      await writeCachedAnalysisResponse(
-        "monte-carlo-paths",
-        simulationRequest,
-        nextData,
-      )
       setData(nextData)
       setDataRequestKey(simulationRequestKey)
     } catch (err) {
@@ -396,8 +366,8 @@ export function MonteCarloSimulationChart({
       {(isDataStale || (!data && !isLoading && !error)) && (
         <div className="rounded-md border bg-background/80 px-3 py-2 text-xs text-muted-foreground">
           {isDataStale
-            ? "Path settings changed. Run Paths to update this cached chart."
-            : "Run Paths to generate and cache the simulation chart."}
+            ? "Path settings changed. Run Paths to update this chart."
+            : "Run Paths to generate the simulation chart."}
         </div>
       )}
 
@@ -441,7 +411,9 @@ export function MonteCarloSimulationChart({
               />
               <YAxis
                 domain={yDomain}
-                tickFormatter={(value) => formatCompactCurrency(Number(value))}
+                tickFormatter={(value) =>
+                  formatCompactCurrency(Number(value), currency)
+                }
                 axisLine={{ stroke: gridColor }}
                 tickLine={{ stroke: gridColor }}
                 tick={{ fontSize: 11, fill: axisColor }}
@@ -459,7 +431,7 @@ export function MonteCarloSimulationChart({
               />
               <Tooltip
                 cursor={{ stroke: "var(--ring)", strokeDasharray: "3 3" }}
-                content={<SimulationTooltip />}
+                content={<SimulationTooltip currency={currency} />}
               />
               {pathKeys.map((key) => (
                 <Line

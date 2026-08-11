@@ -5,6 +5,7 @@ import { Activity, AlertTriangle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { formatCurrencyValue } from "@/lib/currency"
 
 export type StressScenarioResult = {
   var: number
@@ -18,11 +19,13 @@ export type StressScenarioResult = {
   confidence_level: number
   n_simulations: number
   portfolio_value: number
+  portfolio_currency?: string | null
   portfolio_weights: Record<string, number>
 }
 
 export type StressTestResult = {
   tickers: string[]
+  portfolio_currency?: string | null
   baseline: StressScenarioResult
   shocked: StressScenarioResult
   shocks_applied: {
@@ -31,17 +34,12 @@ export type StressTestResult = {
   }
 }
 
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-})
-
-function formatCurrency(value: number) {
-  return currencyFormatter.format(value)
+function formatCurrency(value: number, currency?: string | null) {
+  return formatCurrencyValue(value, currency)
 }
 
-function formatSignedCurrency(value: number) {
-  const absoluteValue = formatCurrency(Math.abs(value))
+function formatSignedCurrency(value: number, currency?: string | null) {
+  const absoluteValue = formatCurrency(Math.abs(value), currency)
 
   if (value > 0) {
     return `+${absoluteValue}`
@@ -62,11 +60,14 @@ function ScenarioCard({
   title,
   badge,
   scenario,
+  currency,
 }: {
   title: string
   badge: string
   scenario: StressScenarioResult
+  currency?: string | null
 }) {
+  const scenarioCurrency = scenario.portfolio_currency ?? currency
   const weights = Object.entries(scenario.portfolio_weights).sort(
     ([, a], [, b]) => b - a,
   )
@@ -82,37 +83,37 @@ function ScenarioCard({
         <div className="rounded-md bg-muted p-3">
           <p className="text-xs text-muted-foreground">Portfolio value</p>
           <p className="font-semibold tabular-nums">
-            {formatCurrency(scenario.portfolio_value)}
+            {formatCurrency(scenario.portfolio_value, scenarioCurrency)}
           </p>
         </div>
         <div className="rounded-md bg-muted p-3">
           <p className="text-xs text-muted-foreground">VaR</p>
           <p className="font-semibold tabular-nums text-chart-5">
-            {formatCurrency(scenario.var_positive)}
+            {formatCurrency(scenario.var_positive, scenarioCurrency)}
           </p>
         </div>
         <div className="rounded-md bg-muted p-3">
           <p className="text-xs text-muted-foreground">CVaR</p>
           <p className="font-semibold tabular-nums text-chart-5">
-            {formatCurrency(scenario.cvar_positive)}
+            {formatCurrency(scenario.cvar_positive, scenarioCurrency)}
           </p>
         </div>
         <div className="rounded-md bg-muted p-3">
           <p className="text-xs text-muted-foreground">P&L Std. Dev.</p>
           <p className="font-semibold tabular-nums">
-            {formatCurrency(scenario.std_pnl)}
+            {formatCurrency(scenario.std_pnl, scenarioCurrency)}
           </p>
         </div>
         <div className="rounded-md bg-muted p-3">
           <p className="text-xs text-muted-foreground">Worst case</p>
           <p className="font-semibold tabular-nums text-destructive">
-            {formatSignedCurrency(scenario.worst_case)}
+            {formatSignedCurrency(scenario.worst_case, scenarioCurrency)}
           </p>
         </div>
         <div className="rounded-md bg-muted p-3">
           <p className="text-xs text-muted-foreground">Best case</p>
           <p className="font-semibold tabular-nums text-chart-3">
-            {formatSignedCurrency(scenario.best_case)}
+            {formatSignedCurrency(scenario.best_case, scenarioCurrency)}
           </p>
         </div>
       </div>
@@ -199,11 +200,13 @@ export function StressTestResults({
             title="Baseline"
             badge="Current"
             scenario={result.baseline}
+            currency={result.portfolio_currency}
           />
           <ScenarioCard
             title="Shocked"
             badge="Scenario"
             scenario={result.shocked}
+            currency={result.portfolio_currency}
           />
         </div>
       </CardContent>

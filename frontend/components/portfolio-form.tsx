@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -48,11 +49,6 @@ import {
 } from "@/components/ui/dialog"
 import { LoginForm } from "@/components/login-form"
 import { useSupabaseAuth } from "@/hooks/use-supabase-auth"
-import {
-  getAnalysisCacheKey,
-  readCachedAnalysisResponse,
-  writeCachedAnalysisResponse,
-} from "@/lib/analysis-cache"
 import { apiUrl } from "@/lib/api"
 import {
   deleteCloudPortfolio,
@@ -60,6 +56,7 @@ import {
   upsertCloudPortfolio,
   type PortfolioSyncResult,
 } from "@/lib/cloud-portfolios"
+import { formatCurrencyValue } from "@/lib/currency"
 import { fetchHistoricalPricesWithCache } from "@/lib/price-cache"
 import { portfolioDb, type SavedPortfolio } from "@/lib/portfolio-db"
 import {
@@ -131,6 +128,7 @@ interface HoldingValuation {
   latest_price: number
   market_value: number
   weight: number
+  currency?: string | null
 }
 
 interface VaRResult {
@@ -146,6 +144,7 @@ interface VaRResult {
   horizon: number
   n_simulations: number
   portfolio_value: number
+  portfolio_currency?: string | null
   holdings: HoldingValuation[]
 }
 
@@ -208,6 +207,38 @@ function getPortfolioSnapshotKey({
     horizon,
     nSimulations,
   })
+}
+
+function getRequestKey(request: unknown) {
+  return JSON.stringify(request)
+}
+
+function getDuplicateTickers(holdings: PortfolioRequest["holdings"]) {
+  const seen = new Set<string>()
+  const duplicates = new Set<string>()
+
+  holdings.forEach((holding) => {
+    const ticker = holding.ticker.toUpperCase().trim()
+
+    if (!ticker) {
+      return
+    }
+
+    if (seen.has(ticker)) {
+      duplicates.add(ticker)
+    } else {
+      seen.add(ticker)
+    }
+  })
+
+  return Array.from(duplicates)
+}
+
+function getDuplicateTickerMessage(duplicateTickers: string[]) {
+  const tickers = duplicateTickers.join(", ")
+  const noun = duplicateTickers.length === 1 ? "ticker" : "tickers"
+
+  return `Combine duplicate ${noun} before saving or running analysis: ${tickers}.`
 }
 
 function createPortfolioId() {
@@ -295,6 +326,19 @@ function AnalysisPlaceholderCard({
   )
 }
 
+function AnalysisErrorCard({ message }: { message: string }) {
+  return (
+    <Card className="border-destructive">
+      <CardContent>
+        <div className="flex items-center gap-4 text-destructive">
+          <AlertTriangle size={50} />
+          <p>{message}</p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export function PortfolioForm() {
   const router = useRouter()
   const [entries, setEntries] = useState<PortfolioEntry[]>(createStarterEntries)
@@ -312,7 +356,7 @@ export function PortfolioForm() {
   const [stressResult, setStressResult] = useState<StressTestResult | null>(
     null,
   )
-  const [stressResultCacheKey, setStressResultCacheKey] = useState<
+  const [stressResultRequestKey, setStressResultRequestKey] = useState<
     string | null
   >(null)
   const [varError, setVarError] = useState<string | null>(null)
@@ -336,9 +380,7 @@ export function PortfolioForm() {
     null,
   )
   const [portfolioName, setPortfolioName] = useState(STARTER_PORTFOLIO_NAME)
-  const [, setSaveStatus] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
-  const [, setIsAutosaving] = useState(false)
   const [userSettings, setUserSettings] = useState<UserSettings>(
     DEFAULT_USER_SETTINGS,
   )
@@ -359,15 +401,24 @@ export function PortfolioForm() {
   >("pending")
   const syncedUserIdRef = useRef<string | null>(null)
   const hasStartedPortfolioInitializationRef = useRef(false)
-  const loadPortfolioRef = useRef<(portfolioId: string) => Promise<void>>(
-    async () => {},
-  )
+  const loadPortfolioRef = useRef<
+    (portfolioId: string, options?: { notify?: boolean }) => Promise<void>
+  >(async () => {})
   const newPortfolioRef = useRef<() => void>(() => {})
   const deletePortfolioRef = useRef<(portfolioId: string) => Promise<void>>(
     async () => {},
   )
   const lastAutosaveKeyRef = useRef<string | null>(null)
   const hasSeededStarterPortfolioRef = useRef(false)
+  const hasShownStarterPortfolioInfoRef = useRef(false)
+  const duplicateTickerToastKeyRef = useRef<string | null>(null)
+  const priceRefreshesInFlightRef = useRef(new Set<string>())
+  const [varResultRequestKey, setVarResultRequestKey] = useState<string | null>(
+    null,
+  )
+  const [optimizerResultRequestKey, setOptimizerResultRequestKey] = useState<
+    string | null
+  >(null)
 
   const createBlankEntry = (): PortfolioEntry => ({
     id: Date.now().toString(),
@@ -376,6 +427,21 @@ export function PortfolioForm() {
     currentPrice: null,
     priceStatus: "idle",
   })
+
+  const showStarterPortfolioInfo = useCallback(() => {
+    if (hasShownStarterPortfolioInfoRef.current) {
+      return
+    }
+
+    hasShownStarterPortfolioInfoRef.current = true
+    toast.info("No saved portfolios found, loading sample portfolio.")
+  }, [])
+
+  const showDuplicateTickerError = useCallback((duplicateTickers: string[]) => {
+    toast.error("Duplicate ticker symbols", {
+      description: getDuplicateTickerMessage(duplicateTickers),
+    })
+  }, [])
 
   const refreshSavedPortfolios = useCallback(async () => {
     const portfolios = await portfolioDb.savedPortfolios
@@ -495,9 +561,11 @@ export function PortfolioForm() {
 
   const addEntry = () => {
     setResult(null)
+    setVarResultRequestKey(null)
     setOptimizerResult(null)
+    setOptimizerResultRequestKey(null)
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setVarError(null)
     setOptimizerError(null)
     setStressError(null)
@@ -508,9 +576,11 @@ export function PortfolioForm() {
   const removeEntry = (id: string) => {
     if (entries.length > 1) {
       setResult(null)
+      setVarResultRequestKey(null)
       setOptimizerResult(null)
+      setOptimizerResultRequestKey(null)
       setStressResult(null)
-      setStressResultCacheKey(null)
+      setStressResultRequestKey(null)
       setVarError(null)
       setOptimizerError(null)
       setStressError(null)
@@ -525,9 +595,11 @@ export function PortfolioForm() {
     value: string | number | null,
   ) => {
     setResult(null)
+    setVarResultRequestKey(null)
     setOptimizerResult(null)
+    setOptimizerResultRequestKey(null)
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setVarError(null)
     setOptimizerError(null)
     setStressError(null)
@@ -541,9 +613,11 @@ export function PortfolioForm() {
 
   const updateTicker = (id: string, ticker: string) => {
     setResult(null)
+    setVarResultRequestKey(null)
     setOptimizerResult(null)
+    setOptimizerResultRequestKey(null)
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setVarError(null)
     setOptimizerError(null)
     setStressError(null)
@@ -576,6 +650,101 @@ export function PortfolioForm() {
     userSettings.priceRefreshIntervalMinutes,
   )
 
+  const refreshEntryPrice = useCallback(
+    async (entryId: string, ticker: string) => {
+      const normalizedTicker = ticker.toUpperCase().trim()
+
+      if (!normalizedTicker) {
+        return
+      }
+
+      const refreshKey = `${entryId}:${normalizedTicker}`
+
+      if (priceRefreshesInFlightRef.current.has(refreshKey)) {
+        return
+      }
+
+      priceRefreshesInFlightRef.current.add(refreshKey)
+
+      try {
+        const priceResult = await fetchHistoricalPricesWithCache({
+          tickers: [normalizedTicker],
+          period: "5d",
+          includeMetadata: true,
+        })
+        const latestRow = priceResult.data.rows?.at(-1)
+        const previousRow = priceResult.data.rows
+          ?.slice(0, -1)
+          .reverse()
+          .find(
+            (row) =>
+              typeof row.prices?.[normalizedTicker] === "number" &&
+              Number.isFinite(row.prices[normalizedTicker]),
+          )
+        const latestPrice = latestRow?.prices?.[normalizedTicker]
+        const previousClose = previousRow?.prices?.[normalizedTicker]
+        const metadata = priceResult.data.metadata?.[normalizedTicker]
+
+        if (typeof latestPrice !== "number" || !Number.isFinite(latestPrice)) {
+          throw new Error(`No current price found for ${normalizedTicker}`)
+        }
+
+        setEntries((currentEntries) =>
+          currentEntries.map((currentEntry) =>
+            currentEntry.id === entryId &&
+            currentEntry.ticker.toUpperCase().trim() === normalizedTicker
+              ? {
+                  ...currentEntry,
+                  companyName: metadata?.name ?? null,
+                  quoteCurrency: metadata?.currency ?? null,
+                  exchange: metadata?.exchange ?? null,
+                  currentPrice: latestPrice,
+                  previousClose:
+                    typeof previousClose === "number" &&
+                    Number.isFinite(previousClose)
+                      ? previousClose
+                      : null,
+                  priceStatus: "loaded",
+                  priceError: undefined,
+                  priceFetchedAt:
+                    priceResult.source === "stale-cache"
+                      ? new Date().toISOString()
+                      : priceResult.fetchedAt,
+                  priceSource: priceResult.source,
+                }
+              : currentEntry,
+          ),
+        )
+      } catch (err) {
+        setEntries((currentEntries) =>
+          currentEntries.map((currentEntry) =>
+            currentEntry.id === entryId &&
+            currentEntry.ticker.toUpperCase().trim() === normalizedTicker
+              ? {
+                  ...currentEntry,
+                  companyName: null,
+                  quoteCurrency: null,
+                  exchange: null,
+                  currentPrice: null,
+                  previousClose: null,
+                  priceStatus: "error",
+                  priceError:
+                    err instanceof Error
+                      ? err.message
+                      : "Failed to fetch price",
+                  priceFetchedAt: undefined,
+                  priceSource: undefined,
+                }
+              : currentEntry,
+          ),
+        )
+      } finally {
+        priceRefreshesInFlightRef.current.delete(refreshKey)
+      }
+    },
+    [],
+  )
+
   useEffect(() => {
     const now = Date.now()
     const timers = entries
@@ -603,84 +772,7 @@ export function PortfolioForm() {
             : 500
 
         return window.setTimeout(() => {
-          void (async () => {
-            try {
-              const priceResult = await fetchHistoricalPricesWithCache({
-                tickers: [ticker],
-                period: "5d",
-                includeMetadata: true,
-              })
-              const latestRow = priceResult.data.rows?.at(-1)
-              const previousRow = priceResult.data.rows
-                ?.slice(0, -1)
-                .reverse()
-                .find(
-                  (row) =>
-                    typeof row.prices?.[ticker] === "number" &&
-                    Number.isFinite(row.prices[ticker]),
-                )
-              const latestPrice = latestRow?.prices?.[ticker]
-              const previousClose = previousRow?.prices?.[ticker]
-              const metadata = priceResult.data.metadata?.[ticker]
-
-              if (
-                typeof latestPrice !== "number" ||
-                !Number.isFinite(latestPrice)
-              ) {
-                throw new Error(`No current price found for ${ticker}`)
-              }
-
-              setEntries((currentEntries) =>
-                currentEntries.map((currentEntry) =>
-                  currentEntry.id === entry.id &&
-                  currentEntry.ticker.toUpperCase().trim() === ticker
-                    ? {
-                        ...currentEntry,
-                        companyName: metadata?.name ?? null,
-                        quoteCurrency: metadata?.currency ?? null,
-                        exchange: metadata?.exchange ?? null,
-                        currentPrice: latestPrice,
-                        previousClose:
-                          typeof previousClose === "number" &&
-                          Number.isFinite(previousClose)
-                            ? previousClose
-                            : null,
-                        priceStatus: "loaded",
-                        priceError: undefined,
-                        priceFetchedAt:
-                          priceResult.source === "stale-cache"
-                            ? new Date().toISOString()
-                            : priceResult.fetchedAt,
-                        priceSource: priceResult.source,
-                      }
-                    : currentEntry,
-                ),
-              )
-            } catch (err) {
-              setEntries((currentEntries) =>
-                currentEntries.map((currentEntry) =>
-                  currentEntry.id === entry.id &&
-                  currentEntry.ticker.toUpperCase().trim() === ticker
-                    ? {
-                        ...currentEntry,
-                        companyName: null,
-                        quoteCurrency: null,
-                        exchange: null,
-                        currentPrice: null,
-                        previousClose: null,
-                        priceStatus: "error",
-                        priceError:
-                          err instanceof Error
-                            ? err.message
-                            : "Failed to fetch price",
-                        priceFetchedAt: undefined,
-                        priceSource: undefined,
-                      }
-                    : currentEntry,
-                ),
-              )
-            }
-          })()
+          void refreshEntryPrice(entry.id, ticker)
         }, refreshDelay)
       })
       .filter((timer): timer is number => timer !== null)
@@ -688,7 +780,37 @@ export function PortfolioForm() {
     return () => {
       timers.forEach((timer) => window.clearTimeout(timer))
     }
-  }, [entries, priceRefreshIntervalMs])
+  }, [entries, priceRefreshIntervalMs, refreshEntryPrice])
+
+  useEffect(() => {
+    const refreshStaleCachedPrices = () => {
+      if (document.visibilityState === "hidden") {
+        return
+      }
+
+      entries.forEach((entry) => {
+        const ticker = entry.ticker.toUpperCase().trim()
+
+        if (
+          !ticker ||
+          entry.priceStatus !== "loaded" ||
+          entry.priceSource !== "stale-cache"
+        ) {
+          return
+        }
+
+        void refreshEntryPrice(entry.id, ticker)
+      })
+    }
+
+    window.addEventListener("focus", refreshStaleCachedPrices)
+    document.addEventListener("visibilitychange", refreshStaleCachedPrices)
+
+    return () => {
+      window.removeEventListener("focus", refreshStaleCachedPrices)
+      document.removeEventListener("visibilitychange", refreshStaleCachedPrices)
+    }
+  }, [entries, refreshEntryPrice])
 
   const buildHoldingsRequest = (): PortfolioRequest["holdings"] | null => {
     const validEntries = entries.filter(
@@ -724,12 +846,17 @@ export function PortfolioForm() {
   const handleSavePortfolio = async () => {
     const holdings = buildHoldingsRequest()
     if (!holdings) {
-      setSaveStatus("Add at least one ticker and quantity before saving.")
+      toast.error("Add at least one ticker and quantity before saving.")
+      return
+    }
+
+    const duplicateTickers = getDuplicateTickers(holdings)
+    if (duplicateTickers.length > 0) {
+      showDuplicateTickerError(duplicateTickers)
       return
     }
 
     setIsSaving(true)
-    setSaveStatus(null)
 
     try {
       const now = new Date().toISOString()
@@ -763,21 +890,25 @@ export function PortfolioForm() {
       if (supabase && user) {
         try {
           await upsertCloudPortfolio(supabase, user.id, portfolio)
-          setSaveStatus("Portfolio saved locally and synced to cloud.")
           setSyncStatus("Cloud sync is up to date.")
+          toast.success("Portfolio saved", {
+            description: "Saved locally and synced to cloud.",
+          })
         } catch (err) {
-          setSaveStatus("Portfolio saved locally. Cloud sync failed.")
           setAuthError(
             err instanceof Error ? err.message : "Failed to sync portfolio.",
           )
+          toast.warning("Portfolio saved locally", {
+            description: "Cloud sync failed.",
+          })
         }
       } else {
-        setSaveStatus("Portfolio saved locally.")
+        toast.success("Portfolio saved locally.")
       }
 
       await refreshSavedPortfolios()
     } catch (err) {
-      setSaveStatus(
+      toast.error(
         err instanceof Error ? err.message : "Failed to save portfolio.",
       )
     } finally {
@@ -785,12 +916,34 @@ export function PortfolioForm() {
     }
   }
 
-  const handleLoadPortfolio = async (portfolioId: string) => {
-    const portfolio = await portfolioDb.savedPortfolios.get(portfolioId)
+  const handleLoadPortfolio = async (
+    portfolioId: string,
+    options: { notify?: boolean } = {},
+  ) => {
+    let shouldNotifyLoad = options.notify !== false
+    let portfolio = await portfolioDb.savedPortfolios.get(portfolioId)
+
     if (!portfolio) {
-      setSaveStatus("Saved portfolio not found.")
-      await refreshSavedPortfolios()
-      return
+      const fallbackPortfolio = await portfolioDb.savedPortfolios
+        .orderBy("lastAccessedAt")
+        .last()
+
+      if (!fallbackPortfolio) {
+        setSelectedPortfolioId(null)
+        setHasCachedPortfolios(false)
+        showStarterPortfolioInfo()
+        router.replace("/")
+        await refreshSavedPortfolios()
+        return
+      }
+
+      portfolio = fallbackPortfolio
+      if (shouldNotifyLoad && !hasShownStarterPortfolioInfoRef.current) {
+        toast.info("Requested portfolio was unavailable.", {
+          description: "Loaded the most recent saved portfolio.",
+        })
+      }
+      shouldNotifyLoad = false
     }
 
     const lastAccessedAt = new Date().toISOString()
@@ -814,16 +967,22 @@ export function PortfolioForm() {
       nSimulations: portfolio.nSimulations,
     })
     setResult(null)
+    setVarResultRequestKey(null)
     setOptimizerResult(null)
+    setOptimizerResultRequestKey(null)
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setVarError(null)
     setOptimizerError(null)
     setStressError(null)
     setStressPriceShocks({})
     setStressVolatilityPercent(100)
     setError(null)
-    setSaveStatus(`Loaded`)
+    if (shouldNotifyLoad) {
+      toast.success("Portfolio loaded", {
+        description: portfolio.name,
+      })
+    }
     router.replace(`/?portfolio=${encodeURIComponent(portfolio.id)}`)
     await refreshSavedPortfolios()
   }
@@ -838,7 +997,7 @@ export function PortfolioForm() {
     setResult(null)
     setOptimizerResult(null)
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setVarError(null)
     setOptimizerError(null)
     setStressError(null)
@@ -868,8 +1027,8 @@ export function PortfolioForm() {
       router.replace("/")
     }
 
-    setSaveStatus("Saved portfolio deleted.")
     await refreshSavedPortfolios()
+    toast.success("Saved portfolio deleted.")
   }
 
   const handleDeletePortfolio = async () => {
@@ -882,7 +1041,6 @@ export function PortfolioForm() {
 
   const handleNewPortfolio = () => {
     clearWorkingPortfolio()
-    setSaveStatus(null)
     router.replace("/")
   }
 
@@ -962,22 +1120,23 @@ export function PortfolioForm() {
 
         if (portfolio) {
           setHasCachedPortfolios(true)
-          await loadPortfolioRef.current(portfolio.id)
+          await loadPortfolioRef.current(portfolio.id, { notify: false })
         } else if (initialCloudSyncState === "failed" && user) {
           // Do not create a sample that could later be uploaded alongside
           // portfolios that were unavailable during the failed cloud sync.
           setHasCachedPortfolios(true)
           setEntries([createBlankEntry()])
           setPortfolioName("")
-          setSaveStatus("Cloud portfolios could not be loaded.")
+          toast.error("Cloud portfolios could not be loaded.")
         } else {
+          showStarterPortfolioInfo()
           setHasCachedPortfolios(false)
         }
       } catch {
         if (!cancelled) {
           // Avoid creating a duplicate if IndexedDB cannot be inspected.
           setHasCachedPortfolios(true)
-          setSaveStatus("Unable to load cached portfolios.")
+          toast.error("Unable to load cached portfolios.")
         }
       } finally {
         if (!cancelled) {
@@ -989,7 +1148,7 @@ export function PortfolioForm() {
     return () => {
       cancelled = true
     }
-  }, [initialCloudSyncState, isAuthLoading, user])
+  }, [initialCloudSyncState, isAuthLoading, showStarterPortfolioInfo, user])
 
   const autosaveSnapshot = useMemo(() => {
     const holdings = entries
@@ -1000,6 +1159,10 @@ export function PortfolioForm() {
       }))
 
     if (holdings.length === 0) {
+      return null
+    }
+
+    if (getDuplicateTickers(holdings).length > 0) {
       return null
     }
 
@@ -1034,8 +1197,6 @@ export function PortfolioForm() {
 
     const timer = window.setTimeout(() => {
       void (async () => {
-        setIsAutosaving(true)
-
         try {
           const now = new Date().toISOString()
           const existingPortfolio = selectedPortfolioId
@@ -1072,20 +1233,20 @@ export function PortfolioForm() {
               await upsertCloudPortfolio(supabase, user.id, portfolio)
               setSyncStatus("Autosave synced to cloud.")
             } catch (err) {
-              setAuthError(
+              const message =
                 err instanceof Error
                   ? err.message
-                  : "Autosave cloud sync failed.",
-              )
+                  : "Autosave cloud sync failed."
+              setAuthError(message)
+              toast.error("Autosave cloud sync failed", {
+                description: message,
+              })
             }
           }
 
           await refreshSavedPortfolios()
-          setSaveStatus(`Autosaved`)
         } catch (err) {
-          setSaveStatus(err instanceof Error ? err.message : "Autosave failed.")
-        } finally {
-          setIsAutosaving(false)
+          toast.error(err instanceof Error ? err.message : "Autosave failed.")
         }
       })()
     }, AUTOSAVE_DELAY_MS)
@@ -1147,6 +1308,7 @@ export function PortfolioForm() {
         confidence_level: confidenceLevel / 100,
         n_simulations: nSimulations,
       }
+      const requestKey = getRequestKey(request)
 
       setIsVarLoading(true)
       setVarError(null)
@@ -1187,11 +1349,12 @@ export function PortfolioForm() {
           horizon,
           n_simulations: data.n_simulations ?? nSimulations,
           portfolio_value: portfolioValue,
+          portfolio_currency: data.portfolio_currency ?? null,
           holdings: data.holdings ?? [],
         }
 
-        await writeCachedAnalysisResponse("var", request, nextResult)
         setResult(nextResult)
+        setVarResultRequestKey(requestKey)
       } catch (err) {
         setVarError(
           err instanceof Error ? err.message : "Failed to analyze portfolio.",
@@ -1207,6 +1370,7 @@ export function PortfolioForm() {
     async (holdings: PortfolioRequest["holdings"]) => {
       if (holdings.length < 2) {
         setOptimizerResult(null)
+        setOptimizerResultRequestKey(null)
         setOptimizerError(
           "Add at least two distinct tickers to run the optimizer.",
         )
@@ -1218,6 +1382,7 @@ export function PortfolioForm() {
         n_portfolios: parseInt(nPortfolios, 10),
         risk_free_rate: DEFAULT_RISK_FREE_RATE,
       }
+      const requestKey = getRequestKey(request)
 
       setIsOptimizerLoading(true)
       setOptimizerError(null)
@@ -1236,8 +1401,8 @@ export function PortfolioForm() {
         }
 
         const data = (await response.json()) as OptimizerResult
-        await writeCachedAnalysisResponse("optimize", request, data)
         setOptimizerResult(data)
+        setOptimizerResultRequestKey(requestKey)
       } catch (err) {
         setOptimizerError(
           err instanceof Error ? err.message : "Failed to optimize portfolio.",
@@ -1252,7 +1417,7 @@ export function PortfolioForm() {
   const runStressTest = useCallback(
     async (holdings: PortfolioRequest["holdings"]) => {
       const request = buildStressTestRequest(holdings)
-      const requestKey = getAnalysisCacheKey("stress", request)
+      const requestKey = getRequestKey(request)
 
       setIsStressLoading(true)
       setStressError(null)
@@ -1271,9 +1436,8 @@ export function PortfolioForm() {
         }
 
         const data = (await response.json()) as StressTestResult
-        await writeCachedAnalysisResponse("stress", request, data)
         setStressResult(data)
-        setStressResultCacheKey(requestKey)
+        setStressResultRequestKey(requestKey)
       } catch (err) {
         setStressError(
           err instanceof Error ? err.message : "Failed to run stress test.",
@@ -1296,13 +1460,21 @@ export function PortfolioForm() {
         return
       }
 
+      const duplicateTickers = getDuplicateTickers(holdings)
+      if (duplicateTickers.length > 0) {
+        const message = getDuplicateTickerMessage(duplicateTickers)
+        setError(message)
+        showDuplicateTickerError(duplicateTickers)
+        return
+      }
+
       await Promise.all([
         runVarAnalysis(holdings),
         runStressTest(holdings),
         runOptimization(holdings),
       ])
     },
-    [runOptimization, runStressTest, runVarAnalysis],
+    [runOptimization, runStressTest, runVarAnalysis, showDuplicateTickerError],
   )
 
   const getValidatedHoldings = () => {
@@ -1313,6 +1485,14 @@ export function PortfolioForm() {
       setError(
         "Please add at least one valid portfolio entry with a ticker and quantity.",
       )
+      return null
+    }
+
+    const duplicateTickers = getDuplicateTickers(holdings)
+    if (duplicateTickers.length > 0) {
+      const message = getDuplicateTickerMessage(duplicateTickers)
+      setError(message)
+      showDuplicateTickerError(duplicateTickers)
       return null
     }
 
@@ -1351,18 +1531,21 @@ export function PortfolioForm() {
 
   const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault()
-    await runAllAnalyses(buildHoldingsRequest())
+    const holdings = getValidatedHoldings()
+
+    if (!holdings) {
+      return
+    }
+
+    await runAllAnalyses(holdings)
   }
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(value)
+  const formatCurrency = (value: number, currency?: string | null) => {
+    return formatCurrencyValue(value, currency)
   }
 
-  const formatSignedCurrency = (value: number) => {
-    const absoluteValue = formatCurrency(Math.abs(value))
+  const formatSignedCurrency = (value: number, currency?: string | null) => {
+    const absoluteValue = formatCurrency(Math.abs(value), currency)
 
     if (value > 0) {
       return `+${absoluteValue}`
@@ -1422,6 +1605,20 @@ export function PortfolioForm() {
     0,
   )
 
+  const loadedQuoteCurrencies = useMemo(() => {
+    return Array.from(
+      new Set(
+        entries
+          .map((entry) => entry.quoteCurrency?.trim())
+          .filter((currency): currency is string => Boolean(currency)),
+      ),
+    )
+  }, [entries])
+  const estimatedPortfolioCurrency =
+    loadedQuoteCurrencies.length === 1 ? loadedQuoteCurrencies[0] : null
+  const hasMixedLoadedCurrencies = loadedQuoteCurrencies.length > 1
+  const portfolioResultCurrency = result?.portfolio_currency ?? null
+
   const entryWeightEstimates = useMemo(() => {
     return new Map(
       entries.map((entry) => {
@@ -1473,7 +1670,7 @@ export function PortfolioForm() {
       return {
         label: "Fetching",
         tone: "muted",
-        title: `Fetching latest USD quote. Prices refresh every ${priceRefreshIntervalLabel}.`,
+        title: `Fetching latest quote. Prices refresh every ${priceRefreshIntervalLabel}.`,
       }
     }
 
@@ -1507,7 +1704,7 @@ export function PortfolioForm() {
     return {
       label: entry.ticker.trim() ? "Pending" : "Empty",
       tone: "subtle",
-      title: "Enter a ticker to fetch a USD quote.",
+      title: "Enter a ticker to fetch its latest quote.",
     }
   }
 
@@ -1527,42 +1724,57 @@ export function PortfolioForm() {
     [stressHoldingsKey],
   )
 
-  const cachedVarRequest = useMemo<PortfolioRequest | null>(() => {
+  const duplicateTickerKey = useMemo(
+    () => getDuplicateTickers(stressHoldings).join(","),
+    [stressHoldings],
+  )
+
+  useEffect(() => {
+    if (!duplicateTickerKey) {
+      duplicateTickerToastKeyRef.current = null
+      return
+    }
+
+    if (duplicateTickerToastKeyRef.current === duplicateTickerKey) {
+      return
+    }
+
+    duplicateTickerToastKeyRef.current = duplicateTickerKey
+    showDuplicateTickerError(duplicateTickerKey.split(","))
+  }, [duplicateTickerKey, showDuplicateTickerError])
+
+  const currentVarRequestKey = useMemo(() => {
     if (stressHoldings.length === 0) {
       return null
     }
 
-    return {
+    return getRequestKey({
       holdings: stressHoldings,
       horizon,
       confidence_level: confidenceLevel / 100,
       n_simulations: nSimulations,
-    }
+    })
   }, [confidenceLevel, horizon, nSimulations, stressHoldings])
 
-  const cachedOptimizerRequest = useMemo(() => {
+  const currentOptimizerRequestKey = useMemo(() => {
     if (stressHoldings.length < 2) {
       return null
     }
 
-    return {
+    return getRequestKey({
       holdings: stressHoldings,
       n_portfolios: parseInt(nPortfolios, 10),
       risk_free_rate: DEFAULT_RISK_FREE_RATE,
-    }
+    })
   }, [nPortfolios, stressHoldings])
 
-  const cachedStressRequest = useMemo(() => {
+  const currentStressRequestKey = useMemo(() => {
     if (stressHoldings.length === 0) {
       return null
     }
 
-    return buildStressTestRequest(stressHoldings)
+    return getRequestKey(buildStressTestRequest(stressHoldings))
   }, [buildStressTestRequest, stressHoldings])
-
-  const cachedStressRequestKey = cachedStressRequest
-    ? getAnalysisCacheKey("stress", cachedStressRequest)
-    : null
 
   const updateStressPriceShock = (ticker: string, value: number) => {
     setStressPriceShocks((current) => ({
@@ -1572,86 +1784,40 @@ export function PortfolioForm() {
   }
 
   useEffect(() => {
-    if (!cachedVarRequest) {
+    if (!currentVarRequestKey) {
       setResult(null)
+      setVarResultRequestKey(null)
       return
     }
 
-    let cancelled = false
-
-    void readCachedAnalysisResponse<VaRResult>("var", cachedVarRequest).then(
-      (cached) => {
-        if (!cancelled) {
-          setResult(cached?.response ?? null)
-          if (cached) {
-            setVarError(null)
-          }
-        }
-      },
-    )
-
-    return () => {
-      cancelled = true
+    if (varResultRequestKey && varResultRequestKey !== currentVarRequestKey) {
+      setResult(null)
+      setVarResultRequestKey(null)
+      setVarError(null)
     }
-  }, [cachedVarRequest])
+  }, [currentVarRequestKey, varResultRequestKey])
 
   useEffect(() => {
-    if (!cachedOptimizerRequest) {
+    if (!currentOptimizerRequestKey) {
       setOptimizerResult(null)
+      setOptimizerResultRequestKey(null)
       return
     }
 
-    let cancelled = false
-
-    void readCachedAnalysisResponse<OptimizerResult>(
-      "optimize",
-      cachedOptimizerRequest,
-    ).then((cached) => {
-      if (!cancelled) {
-        setOptimizerResult(cached?.response ?? null)
-        if (cached) {
-          setOptimizerError(null)
-        }
-      }
-    })
-
-    return () => {
-      cancelled = true
+    if (
+      optimizerResultRequestKey &&
+      optimizerResultRequestKey !== currentOptimizerRequestKey
+    ) {
+      setOptimizerResult(null)
+      setOptimizerResultRequestKey(null)
+      setOptimizerError(null)
     }
-  }, [cachedOptimizerRequest])
-
-  useEffect(() => {
-    if (!cachedStressRequest) {
-      setStressResult(null)
-      setStressResultCacheKey(null)
-      setStressError(null)
-      return
-    }
-
-    let cancelled = false
-
-    void readCachedAnalysisResponse<StressTestResult>(
-      "stress",
-      cachedStressRequest,
-    ).then((cached) => {
-      if (cancelled || !cached) {
-        return
-      }
-
-      setStressResult(cached.response)
-      setStressResultCacheKey(cachedStressRequestKey)
-      setStressError(null)
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [cachedStressRequest, cachedStressRequestKey])
+  }, [currentOptimizerRequestKey, optimizerResultRequestKey])
 
   const isStressResultStale =
     Boolean(stressResult) &&
-    Boolean(cachedStressRequestKey) &&
-    stressResultCacheKey !== cachedStressRequestKey
+    Boolean(currentStressRequestKey) &&
+    stressResultRequestKey !== currentStressRequestKey
 
   useEffect(() => {
     if (stressHoldings.length > 0) {
@@ -1659,7 +1825,7 @@ export function PortfolioForm() {
     }
 
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setStressError(null)
   }, [stressHoldings.length])
 
@@ -1700,7 +1866,6 @@ export function PortfolioForm() {
     })
     setSelectedPortfolioId(starterPortfolio.id)
     setPortfolioName(STARTER_PORTFOLIO_NAME)
-    setSaveStatus("Saving Sample Portfolio...")
     void portfolioDb.savedPortfolios
       .put(starterPortfolio)
       .then(async () => {
@@ -1711,24 +1876,26 @@ export function PortfolioForm() {
             await upsertCloudPortfolio(supabase, user.id, starterPortfolio)
             setSyncStatus("Sample Portfolio synced to cloud.")
           } catch (syncError) {
-            setAuthError(
+            const message =
               syncError instanceof Error
                 ? syncError.message
-                : "Failed to sync Sample Portfolio.",
-            )
+                : "Failed to sync Sample Portfolio."
+            setAuthError(message)
+            toast.error("Sample Portfolio cloud sync failed", {
+              description: message,
+            })
           }
         }
 
         await refreshSavedPortfolios()
         router.replace(`/?portfolio=${encodeURIComponent(starterPortfolio.id)}`)
-        setSaveStatus("Saved Sample Portfolio.")
       })
       .catch((saveError) => {
         lastAutosaveKeyRef.current = null
         setSelectedPortfolioId((current) =>
           current === starterPortfolio.id ? null : current,
         )
-        setSaveStatus(
+        toast.error(
           saveError instanceof Error
             ? saveError.message
             : "Failed to save Sample Portfolio.",
@@ -1960,15 +2127,16 @@ export function PortfolioForm() {
                 <div className="flex w-full items-center text-sm font-medium text-muted-foreground">
                   <div className="min-w-0 flex-1 px-1">Security</div>
                   <div className="w-1/12 px-1">Quantity</div>
-                  <div className="flex w-1/5 gap-1 px-1">
-                    Current Price (USD)
+                  <div className="flex w-1/5 gap-1 px-1 items-center">
+                    Current Price
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Info className="size-3.5 cursor-help" />
                       </TooltipTrigger>
                       <TooltipContent>
-                        Latest USD quote. Prices refresh every{" "}
-                        {priceRefreshIntervalLabel}; change this in Settings.
+                        Latest quote in the reported quote currency. Prices
+                        refresh every {priceRefreshIntervalLabel}; change this
+                        in Settings.
                       </TooltipContent>
                     </Tooltip>
                   </div>
@@ -1987,7 +2155,10 @@ export function PortfolioForm() {
                     entry.priceStatus === "loading"
                       ? "Loading..."
                       : entry.currentPrice !== null
-                        ? formatCurrency(entry.currentPrice)
+                        ? formatCurrency(
+                            entry.currentPrice,
+                            entry.quoteCurrency,
+                          )
                         : "Auto-filled"
                   const priceStatusClass =
                     priceStatus.tone === "error"
@@ -2113,7 +2284,7 @@ export function PortfolioForm() {
                           readOnly
                           value={
                             marketValue !== null
-                              ? formatCurrency(marketValue)
+                              ? formatCurrency(marketValue, entry.quoteCurrency)
                               : "-"
                           }
                           aria-label={`${entry.ticker || "Holding"} market value`}
@@ -2125,7 +2296,7 @@ export function PortfolioForm() {
                           readOnly
                           value={
                             dayChange
-                              ? `${formatSignedCurrency(dayChange.amount)} (${formatSignedPercent(dayChange.percent)})`
+                              ? `${formatSignedCurrency(dayChange.amount, entry.quoteCurrency)} (${formatSignedPercent(dayChange.percent)})`
                               : "-"
                           }
                           aria-label={`${entry.ticker || "Holding"} day move`}
@@ -2137,7 +2308,10 @@ export function PortfolioForm() {
                           readOnly
                           value={
                             dayChange
-                              ? formatSignedCurrency(dayChange.pnl)
+                              ? formatSignedCurrency(
+                                  dayChange.pnl,
+                                  entry.quoteCurrency,
+                                )
                               : "-"
                           }
                           aria-label={`${entry.ticker || "Holding"} day P&L`}
@@ -2186,11 +2360,19 @@ export function PortfolioForm() {
                     <Info className="size-3.5 cursor-help text-muted-foreground" />
                   </TooltipTrigger>
                   <TooltipContent>
-                    Estimated in USD from loaded current prices.
+                    Estimated from loaded current prices when all loaded quotes
+                    share one currency.
                   </TooltipContent>
                 </Tooltip>
               </span>
-              <span>{formatCurrency(estimatedPortfolioValue)}</span>
+              <span>
+                {hasMixedLoadedCurrencies
+                  ? "Mixed currencies"
+                  : formatCurrency(
+                      estimatedPortfolioValue,
+                      estimatedPortfolioCurrency,
+                    )}
+              </span>
             </div>
           </div>
         </CardContent>
@@ -2316,16 +2498,7 @@ export function PortfolioForm() {
           </Card>
 
           <div className="space-y-3">
-            {varError && (
-              <Card className="border-destructive">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-2 text-destructive">
-                    <AlertTriangle className="h-5 w-5" />
-                    <p>{varError}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {varError && <AnalysisErrorCard message={varError} />}
 
             {result ? (
               <Card className="border-chart-1">
@@ -2342,7 +2515,10 @@ export function PortfolioForm() {
                         Value at Risk
                       </p>
                       <p className="text-2xl font-bold text-chart-1">
-                        {formatCurrency(result.var_amount)}
+                        {formatCurrency(
+                          result.var_amount,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {result.var_percentage.toFixed(2)}% of portfolio
@@ -2353,7 +2529,10 @@ export function PortfolioForm() {
                         Expected Shortfall
                       </p>
                       <p className="text-2xl font-bold text-chart-1">
-                        {formatCurrency(result.cvar_amount)}
+                        {formatCurrency(
+                          result.cvar_amount,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {result.cvar_percentage.toFixed(2)}% of portfolio
@@ -2370,7 +2549,10 @@ export function PortfolioForm() {
                       </span>{" "}
                       chance of losing at least{" "}
                       <span className="font-bold text-chart-1">
-                        {formatCurrency(result.var_amount)}
+                        {formatCurrency(
+                          result.var_amount,
+                          portfolioResultCurrency,
+                        )}
                       </span>{" "}
                       over the next {getHorizonLabel(result.horizon)}, which
                       represents{" "}
@@ -2379,7 +2561,10 @@ export function PortfolioForm() {
                       </span>{" "}
                       of your{" "}
                       <span className="font-medium">
-                        {formatCurrency(result.portfolio_value)}
+                        {formatCurrency(
+                          result.portfolio_value,
+                          portfolioResultCurrency,
+                        )}
                       </span>{" "}
                       portfolio.
                     </p>
@@ -2388,7 +2573,10 @@ export function PortfolioForm() {
                       {(100 - result.confidence_level).toFixed(0)}% of simulated
                       outcomes, the average loss is{" "}
                       <span className="font-medium text-foreground">
-                        {formatCurrency(result.cvar_amount)}
+                        {formatCurrency(
+                          result.cvar_amount,
+                          portfolioResultCurrency,
+                        )}
                       </span>
                       .
                     </p>
@@ -2400,13 +2588,19 @@ export function PortfolioForm() {
                         Expected P&L
                       </p>
                       <p className="text-lg font-semibold">
-                        {formatSignedCurrency(result.mean_pnl)}
+                        {formatSignedCurrency(
+                          result.mean_pnl,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                     </div>
                     <div className="rounded-lg bg-muted p-3">
                       <p className="text-xs text-muted-foreground">Best Case</p>
                       <p className="text-lg font-semibold text-chart-1">
-                        {formatSignedCurrency(result.best_case)}
+                        {formatSignedCurrency(
+                          result.best_case,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                     </div>
                     <div className="rounded-lg bg-muted p-3">
@@ -2414,7 +2608,10 @@ export function PortfolioForm() {
                         Worst Case
                       </p>
                       <p className="text-lg font-semibold text-destructive">
-                        {formatSignedCurrency(result.worst_case)}
+                        {formatSignedCurrency(
+                          result.worst_case,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                     </div>
                     <div className="rounded-lg bg-muted p-3">
@@ -2422,14 +2619,24 @@ export function PortfolioForm() {
                         P&L Std. Dev.
                       </p>
                       <p className="text-lg font-semibold">
-                        {formatCurrency(result.std_pnl)}
+                        {formatCurrency(
+                          result.std_pnl,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                     </div>
                     <div className="rounded-lg bg-muted p-3">
                       <p className="text-xs text-muted-foreground">P&L Range</p>
                       <p className="text-lg font-semibold">
-                        {formatSignedCurrency(result.worst_case)} to{" "}
-                        {formatSignedCurrency(result.best_case)}
+                        {formatSignedCurrency(
+                          result.worst_case,
+                          portfolioResultCurrency,
+                        )}{" "}
+                        to{" "}
+                        {formatSignedCurrency(
+                          result.best_case,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                     </div>
                   </div>
@@ -2451,8 +2658,14 @@ export function PortfolioForm() {
                       <li>Time Horizon: {getHorizonLabel(result.horizon)}</li>
                       <li>
                         Portfolio Value:{" "}
-                        {formatCurrency(result.portfolio_value)}
+                        {formatCurrency(
+                          result.portfolio_value,
+                          portfolioResultCurrency,
+                        )}
                       </li>
+                      {result.portfolio_currency && (
+                        <li>Quote Currency: {result.portfolio_currency}</li>
+                      )}
                       <li>
                         Monte Carlo Simulations:{" "}
                         {result.n_simulations.toLocaleString()}
@@ -2464,9 +2677,9 @@ export function PortfolioForm() {
                     <div className="text-sm">
                       <p className="mb-2 font-medium">Calculated Holdings:</p>
                       <div className="space-y-2">
-                        {result.holdings.map((holding) => (
+                        {result.holdings.map((holding, index) => (
                           <div
-                            key={holding.ticker}
+                            key={`${holding.ticker}-${index}`}
                             className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2"
                           >
                             <span className="font-medium">
@@ -2474,11 +2687,17 @@ export function PortfolioForm() {
                             </span>
                             <span className="text-muted-foreground">
                               {holding.quantity.toLocaleString()} shares at{" "}
-                              {formatCurrency(holding.latest_price)}
+                              {formatCurrency(
+                                holding.latest_price,
+                                holding.currency,
+                              )}
                             </span>
                             <span>
                               {(holding.weight * 100).toFixed(2)}% /{" "}
-                              {formatCurrency(holding.market_value)}
+                              {formatCurrency(
+                                holding.market_value,
+                                holding.currency,
+                              )}
                             </span>
                           </div>
                         ))}
@@ -2573,13 +2792,14 @@ export function PortfolioForm() {
 
               <div className="space-y-4">
                 {stressHoldings.length > 0 ? (
-                  stressHoldings.map((holding) => {
+                  stressHoldings.map((holding, index) => {
                     const shockValue = stressPriceShocks[holding.ticker] ?? 0
+                    const shockId = `shock-${holding.ticker}-${index}`
 
                     return (
-                      <div key={holding.ticker} className="space-y-3">
+                      <div key={shockId} className="space-y-3">
                         <div className="flex items-center justify-between gap-3">
-                          <Label htmlFor={`shock-${holding.ticker}`}>
+                          <Label htmlFor={shockId}>
                             {holding.ticker} price volatility
                           </Label>
                           <span className="font-mono text-sm tabular-nums">
@@ -2588,7 +2808,7 @@ export function PortfolioForm() {
                           </span>
                         </div>
                         <Slider
-                          id={`shock-${holding.ticker}`}
+                          id={shockId}
                           min={-80}
                           max={80}
                           step={1}
@@ -2647,16 +2867,7 @@ export function PortfolioForm() {
           </Card>
 
           <div className="space-y-3">
-            {stressError && (
-              <Card className="border-destructive">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-2 text-destructive">
-                    <AlertTriangle className="h-5 w-5" />
-                    <p>{stressError}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {stressError && <AnalysisErrorCard message={stressError} />}
 
             <StressTestResults
               result={stressResult}
@@ -2716,16 +2927,7 @@ export function PortfolioForm() {
           </Card>
 
           <div className="space-y-3">
-            {optimizerError && (
-              <Card className="border-destructive">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-2 text-destructive">
-                    <AlertTriangle className="h-5 w-5" />
-                    <p>{optimizerError}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {optimizerError && <AnalysisErrorCard message={optimizerError} />}
 
             {optimizerResult ? (
               <OptimizerResults result={optimizerResult} />

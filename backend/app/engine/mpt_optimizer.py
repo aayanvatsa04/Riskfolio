@@ -26,11 +26,10 @@ HOW WE COMPUTE IT:
 
 REUSE:
     This module imports fetch_historical_prices, compute_log_returns,
-    and compute_statistics directly from monte_carlo_var.py. There is
-    no duplicate data pipeline code — the same 5 years of price data,
-    the same log return calculation, and the same mean vector (μ) and
-    covariance matrix (Σ) are used as the foundation for both VaR
-    and MPT analysis.
+    and compute_statistics from app.engine.data. There is no duplicate
+    data pipeline code — the same 5 years of price data, the same log
+    return calculation, and the same mean vector (μ) and covariance
+    matrix (Σ) are used as the foundation for VaR, MPT, and stress tests.
 
 INPUTS:  List of tickers + user's current weights
 OUTPUTS: Efficient frontier scatter data + 3 annotated portfolios:
@@ -46,11 +45,11 @@ import time
 import numpy as np
 from scipy.optimize import minimize
 
-# Import the data pipeline functions from the VaR engine.
+# Import the shared data pipeline functions.
 # We deliberately reuse these rather than rewriting them — if the data
 # pipeline ever changes (e.g. switching from yfinance to another source),
 # both VaR and MPT automatically benefit from the update.
-from app.engine.monte_carlo_var import (
+from app.engine.data import (
     compute_log_returns,  # prices → daily log returns DataFrame
     compute_statistics,  # log returns → (μ vector, Σ matrix)
     fetch_historical_prices,  # tickers → 5-year daily price DataFrame
@@ -80,7 +79,7 @@ def annualise_parameters(
     """
     Scale daily statistical parameters to annualised figures.
 
-    compute_statistics() from the VaR engine gives us DAILY figures:
+    compute_statistics() from app.engine.data gives us DAILY figures:
         mu    = average daily log return for each asset   shape: (n_assets,)
         sigma = daily covariance matrix                   shape: (n_assets, n_assets)
 
@@ -757,9 +756,8 @@ def run_mpt_optimization(
 
     total_start = time.perf_counter()
 
-    # ── Steps 1–3: Data pipeline (reused from VaR engine) ───────────────────
-    # These three functions are imported directly from monte_carlo_var.py.
-    # They are not re-implemented here — see that file for full documentation.
+    # ── Steps 1–3: Data pipeline (shared across engines) ───────────────────
+    # These three functions are imported from app.engine.data.
 
     t0 = time.perf_counter()
     prices = fetch_historical_prices(tickers)
