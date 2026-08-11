@@ -37,23 +37,9 @@ export interface CachedPriceResponse {
   fetchedAt: string
 }
 
-export type AnalysisCacheType =
-  | "var"
-  | "optimize"
-  | "stress"
-  | "monte-carlo-paths"
-
-export interface CachedAnalysisResponse {
-  cacheKey: string
-  analysisType: AnalysisCacheType
-  response: unknown
-  fetchedAt: string
-}
-
 class RiskfolioDatabase extends Dexie {
   savedPortfolios!: Table<SavedPortfolio, string>
   priceResponses!: Table<CachedPriceResponse, string>
-  analysisResponses!: Table<CachedAnalysisResponse, string>
 
   constructor() {
     super("riskfolio")
@@ -90,6 +76,12 @@ class RiskfolioDatabase extends Dexie {
               portfolio.createdAt
           }),
       )
+
+    this.version(5).stores({
+      savedPortfolios: "id, name, updatedAt, createdAt, lastAccessedAt",
+      priceResponses: "cacheKey, period, fetchedAt",
+      analysisResponses: null,
+    })
   }
 }
 

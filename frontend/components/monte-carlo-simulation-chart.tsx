@@ -16,11 +16,6 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  getAnalysisCacheKey,
-  readCachedAnalysisResponse,
-  writeCachedAnalysisResponse,
-} from "@/lib/analysis-cache"
 import { apiUrl } from "@/lib/api"
 
 const pathColor = "var(--muted-foreground)"
@@ -95,6 +90,10 @@ const compactCurrencyFormatter = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1,
 })
+
+function getRequestKey(request: unknown) {
+  return JSON.stringify(request)
+}
 
 function formatCurrency(value: number) {
   return currencyFormatter.format(value)
@@ -189,32 +188,9 @@ export function MonteCarloSimulationChart({
     [horizon, pathCount, requestHoldings, volatilityPercent],
   )
   const simulationRequestKey = useMemo(
-    () => getAnalysisCacheKey("monte-carlo-paths", simulationRequest),
+    () => getRequestKey(simulationRequest),
     [simulationRequest],
   )
-
-  useEffect(() => {
-    let cancelled = false
-
-    void readCachedAnalysisResponse<SimulationResponse>(
-      "monte-carlo-paths",
-      simulationRequest,
-    ).then((cached) => {
-      if (cancelled) {
-        return
-      }
-
-      if (cached) {
-        setData(cached.response)
-        setDataRequestKey(simulationRequestKey)
-        setError(null)
-      }
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [simulationRequest, simulationRequestKey])
 
   const runSimulation = async () => {
     setIsLoading(true)
@@ -234,11 +210,6 @@ export function MonteCarloSimulationChart({
       }
 
       const nextData = (await response.json()) as SimulationResponse
-      await writeCachedAnalysisResponse(
-        "monte-carlo-paths",
-        simulationRequest,
-        nextData,
-      )
       setData(nextData)
       setDataRequestKey(simulationRequestKey)
     } catch (err) {
@@ -396,8 +367,8 @@ export function MonteCarloSimulationChart({
       {(isDataStale || (!data && !isLoading && !error)) && (
         <div className="rounded-md border bg-background/80 px-3 py-2 text-xs text-muted-foreground">
           {isDataStale
-            ? "Path settings changed. Run Paths to update this cached chart."
-            : "Run Paths to generate and cache the simulation chart."}
+            ? "Path settings changed. Run Paths to update this chart."
+            : "Run Paths to generate the simulation chart."}
         </div>
       )}
 

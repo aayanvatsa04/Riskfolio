@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -48,11 +49,6 @@ import {
 } from "@/components/ui/dialog"
 import { LoginForm } from "@/components/login-form"
 import { useSupabaseAuth } from "@/hooks/use-supabase-auth"
-import {
-  getAnalysisCacheKey,
-  readCachedAnalysisResponse,
-  writeCachedAnalysisResponse,
-} from "@/lib/analysis-cache"
 import { apiUrl } from "@/lib/api"
 import {
   deleteCloudPortfolio,
@@ -210,6 +206,10 @@ function getPortfolioSnapshotKey({
   })
 }
 
+function getRequestKey(request: unknown) {
+  return JSON.stringify(request)
+}
+
 function createPortfolioId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID()
@@ -312,7 +312,7 @@ export function PortfolioForm() {
   const [stressResult, setStressResult] = useState<StressTestResult | null>(
     null,
   )
-  const [stressResultCacheKey, setStressResultCacheKey] = useState<
+  const [stressResultRequestKey, setStressResultRequestKey] = useState<
     string | null
   >(null)
   const [varError, setVarError] = useState<string | null>(null)
@@ -336,9 +336,7 @@ export function PortfolioForm() {
     null,
   )
   const [portfolioName, setPortfolioName] = useState(STARTER_PORTFOLIO_NAME)
-  const [, setSaveStatus] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
-  const [, setIsAutosaving] = useState(false)
   const [userSettings, setUserSettings] = useState<UserSettings>(
     DEFAULT_USER_SETTINGS,
   )
@@ -359,15 +357,22 @@ export function PortfolioForm() {
   >("pending")
   const syncedUserIdRef = useRef<string | null>(null)
   const hasStartedPortfolioInitializationRef = useRef(false)
-  const loadPortfolioRef = useRef<(portfolioId: string) => Promise<void>>(
-    async () => {},
-  )
+  const loadPortfolioRef = useRef<
+    (portfolioId: string, options?: { notify?: boolean }) => Promise<void>
+  >(async () => {})
   const newPortfolioRef = useRef<() => void>(() => {})
   const deletePortfolioRef = useRef<(portfolioId: string) => Promise<void>>(
     async () => {},
   )
   const lastAutosaveKeyRef = useRef<string | null>(null)
   const hasSeededStarterPortfolioRef = useRef(false)
+  const hasShownStarterPortfolioInfoRef = useRef(false)
+  const [varResultRequestKey, setVarResultRequestKey] = useState<string | null>(
+    null,
+  )
+  const [optimizerResultRequestKey, setOptimizerResultRequestKey] = useState<
+    string | null
+  >(null)
 
   const createBlankEntry = (): PortfolioEntry => ({
     id: Date.now().toString(),
@@ -376,6 +381,15 @@ export function PortfolioForm() {
     currentPrice: null,
     priceStatus: "idle",
   })
+
+  const showStarterPortfolioInfo = useCallback(() => {
+    if (hasShownStarterPortfolioInfoRef.current) {
+      return
+    }
+
+    hasShownStarterPortfolioInfoRef.current = true
+    toast.info("No saved portfolios found, loading sample portfolio.")
+  }, [])
 
   const refreshSavedPortfolios = useCallback(async () => {
     const portfolios = await portfolioDb.savedPortfolios
@@ -495,9 +509,11 @@ export function PortfolioForm() {
 
   const addEntry = () => {
     setResult(null)
+    setVarResultRequestKey(null)
     setOptimizerResult(null)
+    setOptimizerResultRequestKey(null)
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setVarError(null)
     setOptimizerError(null)
     setStressError(null)
@@ -508,9 +524,11 @@ export function PortfolioForm() {
   const removeEntry = (id: string) => {
     if (entries.length > 1) {
       setResult(null)
+      setVarResultRequestKey(null)
       setOptimizerResult(null)
+      setOptimizerResultRequestKey(null)
       setStressResult(null)
-      setStressResultCacheKey(null)
+      setStressResultRequestKey(null)
       setVarError(null)
       setOptimizerError(null)
       setStressError(null)
@@ -525,9 +543,11 @@ export function PortfolioForm() {
     value: string | number | null,
   ) => {
     setResult(null)
+    setVarResultRequestKey(null)
     setOptimizerResult(null)
+    setOptimizerResultRequestKey(null)
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setVarError(null)
     setOptimizerError(null)
     setStressError(null)
@@ -541,9 +561,11 @@ export function PortfolioForm() {
 
   const updateTicker = (id: string, ticker: string) => {
     setResult(null)
+    setVarResultRequestKey(null)
     setOptimizerResult(null)
+    setOptimizerResultRequestKey(null)
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setVarError(null)
     setOptimizerError(null)
     setStressError(null)
@@ -724,12 +746,11 @@ export function PortfolioForm() {
   const handleSavePortfolio = async () => {
     const holdings = buildHoldingsRequest()
     if (!holdings) {
-      setSaveStatus("Add at least one ticker and quantity before saving.")
+      toast.error("Add at least one ticker and quantity before saving.")
       return
     }
 
     setIsSaving(true)
-    setSaveStatus(null)
 
     try {
       const now = new Date().toISOString()
@@ -763,21 +784,25 @@ export function PortfolioForm() {
       if (supabase && user) {
         try {
           await upsertCloudPortfolio(supabase, user.id, portfolio)
-          setSaveStatus("Portfolio saved locally and synced to cloud.")
           setSyncStatus("Cloud sync is up to date.")
+          toast.success("Portfolio saved", {
+            description: "Saved locally and synced to cloud.",
+          })
         } catch (err) {
-          setSaveStatus("Portfolio saved locally. Cloud sync failed.")
           setAuthError(
             err instanceof Error ? err.message : "Failed to sync portfolio.",
           )
+          toast.warning("Portfolio saved locally", {
+            description: "Cloud sync failed.",
+          })
         }
       } else {
-        setSaveStatus("Portfolio saved locally.")
+        toast.success("Portfolio saved locally.")
       }
 
       await refreshSavedPortfolios()
     } catch (err) {
-      setSaveStatus(
+      toast.error(
         err instanceof Error ? err.message : "Failed to save portfolio.",
       )
     } finally {
@@ -785,12 +810,34 @@ export function PortfolioForm() {
     }
   }
 
-  const handleLoadPortfolio = async (portfolioId: string) => {
-    const portfolio = await portfolioDb.savedPortfolios.get(portfolioId)
+  const handleLoadPortfolio = async (
+    portfolioId: string,
+    options: { notify?: boolean } = {},
+  ) => {
+    let shouldNotifyLoad = options.notify !== false
+    let portfolio = await portfolioDb.savedPortfolios.get(portfolioId)
+
     if (!portfolio) {
-      setSaveStatus("Saved portfolio not found.")
-      await refreshSavedPortfolios()
-      return
+      const fallbackPortfolio = await portfolioDb.savedPortfolios
+        .orderBy("lastAccessedAt")
+        .last()
+
+      if (!fallbackPortfolio) {
+        setSelectedPortfolioId(null)
+        setHasCachedPortfolios(false)
+        showStarterPortfolioInfo()
+        router.replace("/")
+        await refreshSavedPortfolios()
+        return
+      }
+
+      portfolio = fallbackPortfolio
+      if (shouldNotifyLoad && !hasShownStarterPortfolioInfoRef.current) {
+        toast.info("Requested portfolio was unavailable.", {
+          description: "Loaded the most recent saved portfolio.",
+        })
+      }
+      shouldNotifyLoad = false
     }
 
     const lastAccessedAt = new Date().toISOString()
@@ -814,16 +861,22 @@ export function PortfolioForm() {
       nSimulations: portfolio.nSimulations,
     })
     setResult(null)
+    setVarResultRequestKey(null)
     setOptimizerResult(null)
+    setOptimizerResultRequestKey(null)
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setVarError(null)
     setOptimizerError(null)
     setStressError(null)
     setStressPriceShocks({})
     setStressVolatilityPercent(100)
     setError(null)
-    setSaveStatus(`Loaded`)
+    if (shouldNotifyLoad) {
+      toast.success("Portfolio loaded", {
+        description: portfolio.name,
+      })
+    }
     router.replace(`/?portfolio=${encodeURIComponent(portfolio.id)}`)
     await refreshSavedPortfolios()
   }
@@ -838,7 +891,7 @@ export function PortfolioForm() {
     setResult(null)
     setOptimizerResult(null)
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setVarError(null)
     setOptimizerError(null)
     setStressError(null)
@@ -868,8 +921,8 @@ export function PortfolioForm() {
       router.replace("/")
     }
 
-    setSaveStatus("Saved portfolio deleted.")
     await refreshSavedPortfolios()
+    toast.success("Saved portfolio deleted.")
   }
 
   const handleDeletePortfolio = async () => {
@@ -882,7 +935,6 @@ export function PortfolioForm() {
 
   const handleNewPortfolio = () => {
     clearWorkingPortfolio()
-    setSaveStatus(null)
     router.replace("/")
   }
 
@@ -962,22 +1014,23 @@ export function PortfolioForm() {
 
         if (portfolio) {
           setHasCachedPortfolios(true)
-          await loadPortfolioRef.current(portfolio.id)
+          await loadPortfolioRef.current(portfolio.id, { notify: false })
         } else if (initialCloudSyncState === "failed" && user) {
           // Do not create a sample that could later be uploaded alongside
           // portfolios that were unavailable during the failed cloud sync.
           setHasCachedPortfolios(true)
           setEntries([createBlankEntry()])
           setPortfolioName("")
-          setSaveStatus("Cloud portfolios could not be loaded.")
+          toast.error("Cloud portfolios could not be loaded.")
         } else {
+          showStarterPortfolioInfo()
           setHasCachedPortfolios(false)
         }
       } catch {
         if (!cancelled) {
           // Avoid creating a duplicate if IndexedDB cannot be inspected.
           setHasCachedPortfolios(true)
-          setSaveStatus("Unable to load cached portfolios.")
+          toast.error("Unable to load cached portfolios.")
         }
       } finally {
         if (!cancelled) {
@@ -989,7 +1042,7 @@ export function PortfolioForm() {
     return () => {
       cancelled = true
     }
-  }, [initialCloudSyncState, isAuthLoading, user])
+  }, [initialCloudSyncState, isAuthLoading, showStarterPortfolioInfo, user])
 
   const autosaveSnapshot = useMemo(() => {
     const holdings = entries
@@ -1034,8 +1087,6 @@ export function PortfolioForm() {
 
     const timer = window.setTimeout(() => {
       void (async () => {
-        setIsAutosaving(true)
-
         try {
           const now = new Date().toISOString()
           const existingPortfolio = selectedPortfolioId
@@ -1072,20 +1123,20 @@ export function PortfolioForm() {
               await upsertCloudPortfolio(supabase, user.id, portfolio)
               setSyncStatus("Autosave synced to cloud.")
             } catch (err) {
-              setAuthError(
+              const message =
                 err instanceof Error
                   ? err.message
-                  : "Autosave cloud sync failed.",
-              )
+                  : "Autosave cloud sync failed."
+              setAuthError(message)
+              toast.error("Autosave cloud sync failed", {
+                description: message,
+              })
             }
           }
 
           await refreshSavedPortfolios()
-          setSaveStatus(`Autosaved`)
         } catch (err) {
-          setSaveStatus(err instanceof Error ? err.message : "Autosave failed.")
-        } finally {
-          setIsAutosaving(false)
+          toast.error(err instanceof Error ? err.message : "Autosave failed.")
         }
       })()
     }, AUTOSAVE_DELAY_MS)
@@ -1147,6 +1198,7 @@ export function PortfolioForm() {
         confidence_level: confidenceLevel / 100,
         n_simulations: nSimulations,
       }
+      const requestKey = getRequestKey(request)
 
       setIsVarLoading(true)
       setVarError(null)
@@ -1190,8 +1242,8 @@ export function PortfolioForm() {
           holdings: data.holdings ?? [],
         }
 
-        await writeCachedAnalysisResponse("var", request, nextResult)
         setResult(nextResult)
+        setVarResultRequestKey(requestKey)
       } catch (err) {
         setVarError(
           err instanceof Error ? err.message : "Failed to analyze portfolio.",
@@ -1207,6 +1259,7 @@ export function PortfolioForm() {
     async (holdings: PortfolioRequest["holdings"]) => {
       if (holdings.length < 2) {
         setOptimizerResult(null)
+        setOptimizerResultRequestKey(null)
         setOptimizerError(
           "Add at least two distinct tickers to run the optimizer.",
         )
@@ -1218,6 +1271,7 @@ export function PortfolioForm() {
         n_portfolios: parseInt(nPortfolios, 10),
         risk_free_rate: DEFAULT_RISK_FREE_RATE,
       }
+      const requestKey = getRequestKey(request)
 
       setIsOptimizerLoading(true)
       setOptimizerError(null)
@@ -1236,8 +1290,8 @@ export function PortfolioForm() {
         }
 
         const data = (await response.json()) as OptimizerResult
-        await writeCachedAnalysisResponse("optimize", request, data)
         setOptimizerResult(data)
+        setOptimizerResultRequestKey(requestKey)
       } catch (err) {
         setOptimizerError(
           err instanceof Error ? err.message : "Failed to optimize portfolio.",
@@ -1252,7 +1306,7 @@ export function PortfolioForm() {
   const runStressTest = useCallback(
     async (holdings: PortfolioRequest["holdings"]) => {
       const request = buildStressTestRequest(holdings)
-      const requestKey = getAnalysisCacheKey("stress", request)
+      const requestKey = getRequestKey(request)
 
       setIsStressLoading(true)
       setStressError(null)
@@ -1271,9 +1325,8 @@ export function PortfolioForm() {
         }
 
         const data = (await response.json()) as StressTestResult
-        await writeCachedAnalysisResponse("stress", request, data)
         setStressResult(data)
-        setStressResultCacheKey(requestKey)
+        setStressResultRequestKey(requestKey)
       } catch (err) {
         setStressError(
           err instanceof Error ? err.message : "Failed to run stress test.",
@@ -1527,42 +1580,38 @@ export function PortfolioForm() {
     [stressHoldingsKey],
   )
 
-  const cachedVarRequest = useMemo<PortfolioRequest | null>(() => {
+  const currentVarRequestKey = useMemo(() => {
     if (stressHoldings.length === 0) {
       return null
     }
 
-    return {
+    return getRequestKey({
       holdings: stressHoldings,
       horizon,
       confidence_level: confidenceLevel / 100,
       n_simulations: nSimulations,
-    }
+    })
   }, [confidenceLevel, horizon, nSimulations, stressHoldings])
 
-  const cachedOptimizerRequest = useMemo(() => {
+  const currentOptimizerRequestKey = useMemo(() => {
     if (stressHoldings.length < 2) {
       return null
     }
 
-    return {
+    return getRequestKey({
       holdings: stressHoldings,
       n_portfolios: parseInt(nPortfolios, 10),
       risk_free_rate: DEFAULT_RISK_FREE_RATE,
-    }
+    })
   }, [nPortfolios, stressHoldings])
 
-  const cachedStressRequest = useMemo(() => {
+  const currentStressRequestKey = useMemo(() => {
     if (stressHoldings.length === 0) {
       return null
     }
 
-    return buildStressTestRequest(stressHoldings)
+    return getRequestKey(buildStressTestRequest(stressHoldings))
   }, [buildStressTestRequest, stressHoldings])
-
-  const cachedStressRequestKey = cachedStressRequest
-    ? getAnalysisCacheKey("stress", cachedStressRequest)
-    : null
 
   const updateStressPriceShock = (ticker: string, value: number) => {
     setStressPriceShocks((current) => ({
@@ -1572,86 +1621,40 @@ export function PortfolioForm() {
   }
 
   useEffect(() => {
-    if (!cachedVarRequest) {
+    if (!currentVarRequestKey) {
       setResult(null)
+      setVarResultRequestKey(null)
       return
     }
 
-    let cancelled = false
-
-    void readCachedAnalysisResponse<VaRResult>("var", cachedVarRequest).then(
-      (cached) => {
-        if (!cancelled) {
-          setResult(cached?.response ?? null)
-          if (cached) {
-            setVarError(null)
-          }
-        }
-      },
-    )
-
-    return () => {
-      cancelled = true
+    if (varResultRequestKey && varResultRequestKey !== currentVarRequestKey) {
+      setResult(null)
+      setVarResultRequestKey(null)
+      setVarError(null)
     }
-  }, [cachedVarRequest])
+  }, [currentVarRequestKey, varResultRequestKey])
 
   useEffect(() => {
-    if (!cachedOptimizerRequest) {
+    if (!currentOptimizerRequestKey) {
       setOptimizerResult(null)
+      setOptimizerResultRequestKey(null)
       return
     }
 
-    let cancelled = false
-
-    void readCachedAnalysisResponse<OptimizerResult>(
-      "optimize",
-      cachedOptimizerRequest,
-    ).then((cached) => {
-      if (!cancelled) {
-        setOptimizerResult(cached?.response ?? null)
-        if (cached) {
-          setOptimizerError(null)
-        }
-      }
-    })
-
-    return () => {
-      cancelled = true
+    if (
+      optimizerResultRequestKey &&
+      optimizerResultRequestKey !== currentOptimizerRequestKey
+    ) {
+      setOptimizerResult(null)
+      setOptimizerResultRequestKey(null)
+      setOptimizerError(null)
     }
-  }, [cachedOptimizerRequest])
-
-  useEffect(() => {
-    if (!cachedStressRequest) {
-      setStressResult(null)
-      setStressResultCacheKey(null)
-      setStressError(null)
-      return
-    }
-
-    let cancelled = false
-
-    void readCachedAnalysisResponse<StressTestResult>(
-      "stress",
-      cachedStressRequest,
-    ).then((cached) => {
-      if (cancelled || !cached) {
-        return
-      }
-
-      setStressResult(cached.response)
-      setStressResultCacheKey(cachedStressRequestKey)
-      setStressError(null)
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [cachedStressRequest, cachedStressRequestKey])
+  }, [currentOptimizerRequestKey, optimizerResultRequestKey])
 
   const isStressResultStale =
     Boolean(stressResult) &&
-    Boolean(cachedStressRequestKey) &&
-    stressResultCacheKey !== cachedStressRequestKey
+    Boolean(currentStressRequestKey) &&
+    stressResultRequestKey !== currentStressRequestKey
 
   useEffect(() => {
     if (stressHoldings.length > 0) {
@@ -1659,7 +1662,7 @@ export function PortfolioForm() {
     }
 
     setStressResult(null)
-    setStressResultCacheKey(null)
+    setStressResultRequestKey(null)
     setStressError(null)
   }, [stressHoldings.length])
 
@@ -1700,7 +1703,6 @@ export function PortfolioForm() {
     })
     setSelectedPortfolioId(starterPortfolio.id)
     setPortfolioName(STARTER_PORTFOLIO_NAME)
-    setSaveStatus("Saving Sample Portfolio...")
     void portfolioDb.savedPortfolios
       .put(starterPortfolio)
       .then(async () => {
@@ -1711,24 +1713,26 @@ export function PortfolioForm() {
             await upsertCloudPortfolio(supabase, user.id, starterPortfolio)
             setSyncStatus("Sample Portfolio synced to cloud.")
           } catch (syncError) {
-            setAuthError(
+            const message =
               syncError instanceof Error
                 ? syncError.message
-                : "Failed to sync Sample Portfolio.",
-            )
+                : "Failed to sync Sample Portfolio."
+            setAuthError(message)
+            toast.error("Sample Portfolio cloud sync failed", {
+              description: message,
+            })
           }
         }
 
         await refreshSavedPortfolios()
         router.replace(`/?portfolio=${encodeURIComponent(starterPortfolio.id)}`)
-        setSaveStatus("Saved Sample Portfolio.")
       })
       .catch((saveError) => {
         lastAutosaveKeyRef.current = null
         setSelectedPortfolioId((current) =>
           current === starterPortfolio.id ? null : current,
         )
-        setSaveStatus(
+        toast.error(
           saveError instanceof Error
             ? saveError.message
             : "Failed to save Sample Portfolio.",

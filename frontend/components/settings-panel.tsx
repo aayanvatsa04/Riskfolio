@@ -38,7 +38,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { useSupabaseAuth } from "@/hooks/use-supabase-auth"
 import { deleteAllCloudPortfolios } from "@/lib/cloud-portfolios"
@@ -58,7 +57,6 @@ export function SettingsPanel() {
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_USER_SETTINGS)
   const [status, setStatus] = useState<string | null>(null)
   const [isClearingCache, setIsClearingCache] = useState(false)
-  const [isClearingAnalysisCache, setIsClearingAnalysisCache] = useState(false)
   const [portfolioStatus, setPortfolioStatus] = useState<string | null>(null)
   const [isClearingLocalPortfolios, setIsClearingLocalPortfolios] =
     useState(false)
@@ -111,22 +109,6 @@ export function SettingsPanel() {
       setStatus(err instanceof Error ? err.message : "Failed to clear cache.")
     } finally {
       setIsClearingCache(false)
-    }
-  }
-
-  const clearAnalysisCache = async () => {
-    setIsClearingAnalysisCache(true)
-    setStatus(null)
-
-    try {
-      await portfolioDb.analysisResponses.clear()
-      setStatus("Cached analysis outputs cleared.")
-    } catch (err) {
-      setStatus(
-        err instanceof Error ? err.message : "Failed to clear analysis cache.",
-      )
-    } finally {
-      setIsClearingAnalysisCache(false)
     }
   }
 
@@ -230,28 +212,6 @@ export function SettingsPanel() {
               Clear price cache
             </Button>
           </div>
-
-          <div className="flex flex-col gap-2 rounded-md border bg-background/70 p-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-medium">Analysis output cache</p>
-              <p className="text-sm text-muted-foreground">
-                Stored VaR, optimizer, stress, and path results are refreshed
-                only when you click a run button.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={isClearingAnalysisCache}
-              onClick={() => void clearAnalysisCache()}
-              className="sm:w-44"
-            >
-              <DatabaseZap className="size-4" />
-              Clear analysis cache
-            </Button>
-          </div>
-
-          <Separator />
 
           <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
             Prices come from the historical price endpoint and are treated as
