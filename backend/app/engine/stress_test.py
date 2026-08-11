@@ -109,7 +109,7 @@ def apply_price_shocks(
     Args:
         portfolio:      Dict of ticker -> weight (must sum to ~1.0), the
                         portfolio's weights BEFORE any shock.
-        portfolio_value: The portfolio's total value in USD BEFORE any
+        portfolio_value: The portfolio's total value in its quote currency BEFORE any
                         shock (today's actual market value).
         price_shocks:   Dict of ticker -> shock, e.g. {"AAPL": -0.15}
                         means AAPL's position instantly loses 15% of its
@@ -123,7 +123,7 @@ def apply_price_shocks(
         Tuple of (shocked_weights, shocked_portfolio_value):
             shocked_weights:       Dict of ticker -> NEW weight, summing
                                    to 1.0, reflecting the shock.
-            shocked_portfolio_value: The NEW total portfolio value in USD.
+            shocked_portfolio_value: The NEW total portfolio value in the quote currency.
 
     Raises:
         ValueError: If the combined shocks reduce the total portfolio
@@ -212,7 +212,7 @@ def run_stress_test_analysis(
         portfolio:          Dict of ticker -> weight, current (unshocked)
                             portfolio weights. Must sum to ~1.0.
         portfolio_value:    Current (unshocked) total portfolio value in
-                            USD.
+                            the portfolio's quote currency.
         price_shocks:       Dict of ticker -> instantaneous price shock,
                             e.g. {"AAPL": -0.15}. Defaults to no shocks
                             for any ticker if omitted.

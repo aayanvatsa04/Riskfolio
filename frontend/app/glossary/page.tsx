@@ -118,9 +118,9 @@ const terms = [
     term: "Portfolio Value",
     fullName: "Current market value",
     summary:
-      "The current dollar value of all holdings, using latest prices multiplied by share quantities.",
+      "The current value of all holdings, using latest prices multiplied by share quantities.",
     context:
-      "Riskfolio treats portfolio value as today’s USD market value, not your original purchase cost.",
+      "Riskfolio treats portfolio value as today's market value in the holdings' shared quote currency, not your original purchase cost.",
   },
   {
     term: "Geometric Brownian Motion",

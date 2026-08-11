@@ -8,7 +8,7 @@ Value at Risk (VaR) at 95% confidence.
 
 IMPORTANT — Portfolio Value Definition:
     portfolio_value refers to the CURRENT MARKET VALUE of the portfolio
-    — i.e. what your holdings are worth TODAY if you sold everything,
+    in its quote currency — i.e. what your holdings are worth TODAY if you sold everything,
     NOT the amount of cash you originally invested.
 
     Example: You invested $8,000 six months ago. Your holdings are
@@ -353,7 +353,7 @@ def explain_results(
 
 def run_var_analysis(
     portfolio: dict,  # e.g. {"AAPL": 0.5, "TSLA": 0.3, "GOOGL": 0.2}
-    portfolio_value: float,  # CURRENT MARKET VALUE in USD (what holdings are
+    portfolio_value: float,  # CURRENT MARKET VALUE in the quote currency (what holdings are
     # worth TODAY, not original investment)
     horizon: int = 1,  # trading days: 1, 5, or 22
     confidence_level: float = 0.95,
@@ -368,7 +368,7 @@ def run_var_analysis(
 
     Args:
         portfolio:         Dict of ticker -> weight. Weights must sum to 1.0.
-        portfolio_value:   Current market value of holdings in USD today.
+        portfolio_value:   Current market value of holdings in their quote currency today.
         horizon:           Time horizon in trading days (1, 5, or 22).
         confidence_level:  VaR confidence level (default 0.95 = 95%).
         n_simulations:     Number of Monte Carlo simulations (default 10,000).

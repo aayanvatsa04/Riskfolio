@@ -27,6 +27,125 @@ import yfinance as yf
 MIN_TRADING_DAYS_FOR_ANALYSIS = 252
 
 
+def _read_yfinance_value(source: object, key: str) -> object:
+    if isinstance(source, dict):
+        return source.get(key)
+
+    value = getattr(source, key, None)
+    if value is not None:
+        return value
+
+    if hasattr(source, "get"):
+        try:
+            return source.get(key)
+        except Exception:
+            return None
+
+    return None
+
+
+def _normalize_quote_currency(raw_currency: object) -> str | None:
+    if not isinstance(raw_currency, str):
+        return None
+
+    currency = raw_currency.strip()
+    if not currency:
+        return None
+    if currency.islower() or currency.isupper():
+        return currency.upper()
+    return currency
+
+
+def get_quote_currency(ticker: str) -> str | None:
+    """
+    Best-effort yfinance quote-currency lookup.
+
+    yfinance exposes `currency` through Ticker.fast_info and get_info().
+    Return None when Yahoo metadata is unavailable; callers decide whether
+    an unknown currency is acceptable for their workflow.
+    """
+    try:
+        ticker_client = yf.Ticker(ticker)
+    except Exception:
+        return None
+
+    try:
+        fast_info = ticker_client.fast_info
+    except Exception:
+        fast_info = None
+
+    if fast_info is not None:
+        currency = _normalize_quote_currency(
+            _read_yfinance_value(fast_info, "currency")
+        )
+        if currency is not None:
+            return currency
+
+    try:
+        info = ticker_client.get_info()
+    except Exception:
+        try:
+            info = ticker_client.info
+        except Exception:
+            info = {}
+
+    if isinstance(info, dict):
+        return _normalize_quote_currency(info.get("currency"))
+
+    return None
+
+
+def get_ticker_metadata(ticker: str) -> dict[str, str | None]:
+    metadata: dict[str, str | None] = {
+        "name": None,
+        "currency": None,
+        "exchange": None,
+    }
+    ticker_client = None
+
+    try:
+        ticker_client = yf.Ticker(ticker)
+        fast_info = ticker_client.fast_info
+    except Exception:
+        fast_info = None
+
+    if fast_info is not None:
+        raw_currency = _read_yfinance_value(fast_info, "currency")
+        currency = _normalize_quote_currency(raw_currency)
+        if currency is not None:
+            metadata["currency"] = currency
+
+        raw_exchange = _read_yfinance_value(fast_info, "exchange")
+        if isinstance(raw_exchange, str) and raw_exchange.strip():
+            metadata["exchange"] = raw_exchange.strip()
+
+    info = {}
+    if ticker_client is not None:
+        try:
+            info = ticker_client.get_info()
+        except Exception:
+            try:
+                info = ticker_client.info
+            except Exception:
+                info = {}
+
+    if isinstance(info, dict):
+        for name_key in ("shortName", "longName", "displayName"):
+            raw_name = info.get(name_key)
+            if isinstance(raw_name, str) and raw_name.strip():
+                metadata["name"] = raw_name.strip()
+                break
+
+        if metadata["currency"] is None:
+            metadata["currency"] = _normalize_quote_currency(info.get("currency"))
+
+        raw_exchange = info.get("exchange")
+        if metadata["exchange"] is None and isinstance(raw_exchange, str):
+            metadata["exchange"] = raw_exchange.strip() or None
+
+    return metadata
+
+
 def fetch_historical_prices(tickers: list[str], period: str = "5y") -> pd.DataFrame:
     """
     Download adjusted daily closing prices for a list of tickers.

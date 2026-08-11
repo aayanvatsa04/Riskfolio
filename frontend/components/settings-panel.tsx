@@ -215,9 +215,9 @@ export function SettingsPanel() {
 
           <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
             Prices come from the historical price endpoint and are treated as
-            USD quotes. The dashboard rejects confirmed non-USD tickers, but
-            unavailable metadata is treated as unknown rather than blocking the
-            user.
+            quotes in each reported quote currency. The dashboard rejects
+            mixed-currency portfolios and tickers whose quote currency cannot be
+            confirmed.
           </div>
 
           {status && (

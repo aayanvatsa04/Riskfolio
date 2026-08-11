@@ -56,6 +56,7 @@ import {
   upsertCloudPortfolio,
   type PortfolioSyncResult,
 } from "@/lib/cloud-portfolios"
+import { formatCurrencyValue } from "@/lib/currency"
 import { fetchHistoricalPricesWithCache } from "@/lib/price-cache"
 import { portfolioDb, type SavedPortfolio } from "@/lib/portfolio-db"
 import {
@@ -127,6 +128,7 @@ interface HoldingValuation {
   latest_price: number
   market_value: number
   weight: number
+  currency?: string | null
 }
 
 interface VaRResult {
@@ -142,6 +144,7 @@ interface VaRResult {
   horizon: number
   n_simulations: number
   portfolio_value: number
+  portfolio_currency?: string | null
   holdings: HoldingValuation[]
 }
 
@@ -317,6 +320,19 @@ function AnalysisPlaceholderCard({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Skeleton className={`h-10 w-full ${skeletonClass}`} />
           <Skeleton className={`h-10 w-full ${skeletonClass}`} />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function AnalysisErrorCard({ message }: { message: string }) {
+  return (
+    <Card className="border-destructive">
+      <CardContent>
+        <div className="flex items-center gap-4 text-destructive">
+          <AlertTriangle size={50} />
+          <p>{message}</p>
         </div>
       </CardContent>
     </Card>
@@ -1284,6 +1300,7 @@ export function PortfolioForm() {
           horizon,
           n_simulations: data.n_simulations ?? nSimulations,
           portfolio_value: portfolioValue,
+          portfolio_currency: data.portfolio_currency ?? null,
           holdings: data.holdings ?? [],
         }
 
@@ -1474,15 +1491,12 @@ export function PortfolioForm() {
     await runAllAnalyses(holdings)
   }
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(value)
+  const formatCurrency = (value: number, currency?: string | null) => {
+    return formatCurrencyValue(value, currency)
   }
 
-  const formatSignedCurrency = (value: number) => {
-    const absoluteValue = formatCurrency(Math.abs(value))
+  const formatSignedCurrency = (value: number, currency?: string | null) => {
+    const absoluteValue = formatCurrency(Math.abs(value), currency)
 
     if (value > 0) {
       return `+${absoluteValue}`
@@ -1542,6 +1556,20 @@ export function PortfolioForm() {
     0,
   )
 
+  const loadedQuoteCurrencies = useMemo(() => {
+    return Array.from(
+      new Set(
+        entries
+          .map((entry) => entry.quoteCurrency?.trim())
+          .filter((currency): currency is string => Boolean(currency)),
+      ),
+    )
+  }, [entries])
+  const estimatedPortfolioCurrency =
+    loadedQuoteCurrencies.length === 1 ? loadedQuoteCurrencies[0] : null
+  const hasMixedLoadedCurrencies = loadedQuoteCurrencies.length > 1
+  const portfolioResultCurrency = result?.portfolio_currency ?? null
+
   const entryWeightEstimates = useMemo(() => {
     return new Map(
       entries.map((entry) => {
@@ -1593,7 +1621,7 @@ export function PortfolioForm() {
       return {
         label: "Fetching",
         tone: "muted",
-        title: `Fetching latest USD quote. Prices refresh every ${priceRefreshIntervalLabel}.`,
+        title: `Fetching latest quote. Prices refresh every ${priceRefreshIntervalLabel}.`,
       }
     }
 
@@ -1627,7 +1655,7 @@ export function PortfolioForm() {
     return {
       label: entry.ticker.trim() ? "Pending" : "Empty",
       tone: "subtle",
-      title: "Enter a ticker to fetch a USD quote.",
+      title: "Enter a ticker to fetch its latest quote.",
     }
   }
 
@@ -2050,15 +2078,16 @@ export function PortfolioForm() {
                 <div className="flex w-full items-center text-sm font-medium text-muted-foreground">
                   <div className="min-w-0 flex-1 px-1">Security</div>
                   <div className="w-1/12 px-1">Quantity</div>
-                  <div className="flex w-1/5 gap-1 px-1">
-                    Current Price (USD)
+                  <div className="flex w-1/5 gap-1 px-1 items-center">
+                    Current Price
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Info className="size-3.5 cursor-help" />
                       </TooltipTrigger>
                       <TooltipContent>
-                        Latest USD quote. Prices refresh every{" "}
-                        {priceRefreshIntervalLabel}; change this in Settings.
+                        Latest quote in the reported quote currency. Prices
+                        refresh every {priceRefreshIntervalLabel}; change this
+                        in Settings.
                       </TooltipContent>
                     </Tooltip>
                   </div>
@@ -2077,7 +2106,10 @@ export function PortfolioForm() {
                     entry.priceStatus === "loading"
                       ? "Loading..."
                       : entry.currentPrice !== null
-                        ? formatCurrency(entry.currentPrice)
+                        ? formatCurrency(
+                            entry.currentPrice,
+                            entry.quoteCurrency,
+                          )
                         : "Auto-filled"
                   const priceStatusClass =
                     priceStatus.tone === "error"
@@ -2203,7 +2235,7 @@ export function PortfolioForm() {
                           readOnly
                           value={
                             marketValue !== null
-                              ? formatCurrency(marketValue)
+                              ? formatCurrency(marketValue, entry.quoteCurrency)
                               : "-"
                           }
                           aria-label={`${entry.ticker || "Holding"} market value`}
@@ -2215,7 +2247,7 @@ export function PortfolioForm() {
                           readOnly
                           value={
                             dayChange
-                              ? `${formatSignedCurrency(dayChange.amount)} (${formatSignedPercent(dayChange.percent)})`
+                              ? `${formatSignedCurrency(dayChange.amount, entry.quoteCurrency)} (${formatSignedPercent(dayChange.percent)})`
                               : "-"
                           }
                           aria-label={`${entry.ticker || "Holding"} day move`}
@@ -2227,7 +2259,10 @@ export function PortfolioForm() {
                           readOnly
                           value={
                             dayChange
-                              ? formatSignedCurrency(dayChange.pnl)
+                              ? formatSignedCurrency(
+                                  dayChange.pnl,
+                                  entry.quoteCurrency,
+                                )
                               : "-"
                           }
                           aria-label={`${entry.ticker || "Holding"} day P&L`}
@@ -2276,11 +2311,19 @@ export function PortfolioForm() {
                     <Info className="size-3.5 cursor-help text-muted-foreground" />
                   </TooltipTrigger>
                   <TooltipContent>
-                    Estimated in USD from loaded current prices.
+                    Estimated from loaded current prices when all loaded quotes
+                    share one currency.
                   </TooltipContent>
                 </Tooltip>
               </span>
-              <span>{formatCurrency(estimatedPortfolioValue)}</span>
+              <span>
+                {hasMixedLoadedCurrencies
+                  ? "Mixed currencies"
+                  : formatCurrency(
+                      estimatedPortfolioValue,
+                      estimatedPortfolioCurrency,
+                    )}
+              </span>
             </div>
           </div>
         </CardContent>
@@ -2406,16 +2449,7 @@ export function PortfolioForm() {
           </Card>
 
           <div className="space-y-3">
-            {varError && (
-              <Card className="border-destructive">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-2 text-destructive">
-                    <AlertTriangle className="h-5 w-5" />
-                    <p>{varError}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {varError && <AnalysisErrorCard message={varError} />}
 
             {result ? (
               <Card className="border-chart-1">
@@ -2432,7 +2466,10 @@ export function PortfolioForm() {
                         Value at Risk
                       </p>
                       <p className="text-2xl font-bold text-chart-1">
-                        {formatCurrency(result.var_amount)}
+                        {formatCurrency(
+                          result.var_amount,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {result.var_percentage.toFixed(2)}% of portfolio
@@ -2443,7 +2480,10 @@ export function PortfolioForm() {
                         Expected Shortfall
                       </p>
                       <p className="text-2xl font-bold text-chart-1">
-                        {formatCurrency(result.cvar_amount)}
+                        {formatCurrency(
+                          result.cvar_amount,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {result.cvar_percentage.toFixed(2)}% of portfolio
@@ -2460,7 +2500,10 @@ export function PortfolioForm() {
                       </span>{" "}
                       chance of losing at least{" "}
                       <span className="font-bold text-chart-1">
-                        {formatCurrency(result.var_amount)}
+                        {formatCurrency(
+                          result.var_amount,
+                          portfolioResultCurrency,
+                        )}
                       </span>{" "}
                       over the next {getHorizonLabel(result.horizon)}, which
                       represents{" "}
@@ -2469,7 +2512,10 @@ export function PortfolioForm() {
                       </span>{" "}
                       of your{" "}
                       <span className="font-medium">
-                        {formatCurrency(result.portfolio_value)}
+                        {formatCurrency(
+                          result.portfolio_value,
+                          portfolioResultCurrency,
+                        )}
                       </span>{" "}
                       portfolio.
                     </p>
@@ -2478,7 +2524,10 @@ export function PortfolioForm() {
                       {(100 - result.confidence_level).toFixed(0)}% of simulated
                       outcomes, the average loss is{" "}
                       <span className="font-medium text-foreground">
-                        {formatCurrency(result.cvar_amount)}
+                        {formatCurrency(
+                          result.cvar_amount,
+                          portfolioResultCurrency,
+                        )}
                       </span>
                       .
                     </p>
@@ -2490,13 +2539,19 @@ export function PortfolioForm() {
                         Expected P&L
                       </p>
                       <p className="text-lg font-semibold">
-                        {formatSignedCurrency(result.mean_pnl)}
+                        {formatSignedCurrency(
+                          result.mean_pnl,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                     </div>
                     <div className="rounded-lg bg-muted p-3">
                       <p className="text-xs text-muted-foreground">Best Case</p>
                       <p className="text-lg font-semibold text-chart-1">
-                        {formatSignedCurrency(result.best_case)}
+                        {formatSignedCurrency(
+                          result.best_case,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                     </div>
                     <div className="rounded-lg bg-muted p-3">
@@ -2504,7 +2559,10 @@ export function PortfolioForm() {
                         Worst Case
                       </p>
                       <p className="text-lg font-semibold text-destructive">
-                        {formatSignedCurrency(result.worst_case)}
+                        {formatSignedCurrency(
+                          result.worst_case,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                     </div>
                     <div className="rounded-lg bg-muted p-3">
@@ -2512,14 +2570,24 @@ export function PortfolioForm() {
                         P&L Std. Dev.
                       </p>
                       <p className="text-lg font-semibold">
-                        {formatCurrency(result.std_pnl)}
+                        {formatCurrency(
+                          result.std_pnl,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                     </div>
                     <div className="rounded-lg bg-muted p-3">
                       <p className="text-xs text-muted-foreground">P&L Range</p>
                       <p className="text-lg font-semibold">
-                        {formatSignedCurrency(result.worst_case)} to{" "}
-                        {formatSignedCurrency(result.best_case)}
+                        {formatSignedCurrency(
+                          result.worst_case,
+                          portfolioResultCurrency,
+                        )}{" "}
+                        to{" "}
+                        {formatSignedCurrency(
+                          result.best_case,
+                          portfolioResultCurrency,
+                        )}
                       </p>
                     </div>
                   </div>
@@ -2541,8 +2609,14 @@ export function PortfolioForm() {
                       <li>Time Horizon: {getHorizonLabel(result.horizon)}</li>
                       <li>
                         Portfolio Value:{" "}
-                        {formatCurrency(result.portfolio_value)}
+                        {formatCurrency(
+                          result.portfolio_value,
+                          portfolioResultCurrency,
+                        )}
                       </li>
+                      {result.portfolio_currency && (
+                        <li>Quote Currency: {result.portfolio_currency}</li>
+                      )}
                       <li>
                         Monte Carlo Simulations:{" "}
                         {result.n_simulations.toLocaleString()}
@@ -2564,11 +2638,17 @@ export function PortfolioForm() {
                             </span>
                             <span className="text-muted-foreground">
                               {holding.quantity.toLocaleString()} shares at{" "}
-                              {formatCurrency(holding.latest_price)}
+                              {formatCurrency(
+                                holding.latest_price,
+                                holding.currency,
+                              )}
                             </span>
                             <span>
                               {(holding.weight * 100).toFixed(2)}% /{" "}
-                              {formatCurrency(holding.market_value)}
+                              {formatCurrency(
+                                holding.market_value,
+                                holding.currency,
+                              )}
                             </span>
                           </div>
                         ))}
@@ -2738,16 +2818,7 @@ export function PortfolioForm() {
           </Card>
 
           <div className="space-y-3">
-            {stressError && (
-              <Card className="border-destructive">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-2 text-destructive">
-                    <AlertTriangle className="h-5 w-5" />
-                    <p>{stressError}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {stressError && <AnalysisErrorCard message={stressError} />}
 
             <StressTestResults
               result={stressResult}
@@ -2807,16 +2878,7 @@ export function PortfolioForm() {
           </Card>
 
           <div className="space-y-3">
-            {optimizerError && (
-              <Card className="border-destructive">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-2 text-destructive">
-                    <AlertTriangle className="h-5 w-5" />
-                    <p>{optimizerError}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {optimizerError && <AnalysisErrorCard message={optimizerError} />}
 
             {optimizerResult ? (
               <OptimizerResults result={optimizerResult} />

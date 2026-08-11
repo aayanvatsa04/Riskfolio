@@ -31,6 +31,7 @@ class HoldingValuation(BaseModel):
     latest_price: float
     market_value: float
     weight: float
+    currency: str | None = None
 
 
 class HealthResponse(BaseModel):

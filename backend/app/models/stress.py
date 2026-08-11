@@ -105,6 +105,7 @@ class StressScenarioResult(BaseModel):
     confidence_level: float
     n_simulations: int
     portfolio_value: float
+    portfolio_currency: str | None = None
     portfolio_weights: dict[str, float]
 
 
@@ -129,6 +130,7 @@ class StressTestResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     tickers: list[str]
+    portfolio_currency: str | None = None
     baseline: StressScenarioResult
     shocked: StressScenarioResult
     shocks_applied: ShocksApplied

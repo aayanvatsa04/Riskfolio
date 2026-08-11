@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiUrl } from "@/lib/api"
+import { formatCurrencyValue } from "@/lib/currency"
 
 const pathColor = "var(--muted-foreground)"
 const downsideColor = "var(--chart-5)"
@@ -53,6 +54,7 @@ type SimulationResponse = {
   n_paths: number
   volatility_multiplier: number
   portfolio_value: number
+  portfolio_currency?: string | null
   summary: SummaryPoint[]
   paths: SimulationPath[]
 }
@@ -66,6 +68,7 @@ type TooltipPayloadItem = {
 type SimulationTooltipProps = {
   active?: boolean
   payload?: TooltipPayloadItem[]
+  currency?: string | null
 }
 
 type MonteCarloSimulationChartProps = {
@@ -78,29 +81,19 @@ type ApiErrorDetail = {
   message?: string
 }
 
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0,
-})
-
-const compactCurrencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  notation: "compact",
-  maximumFractionDigits: 1,
-})
-
 function getRequestKey(request: unknown) {
   return JSON.stringify(request)
 }
 
-function formatCurrency(value: number) {
-  return currencyFormatter.format(value)
+function formatCurrency(value: number, currency?: string | null) {
+  return formatCurrencyValue(value, currency, { maximumFractionDigits: 0 })
 }
 
-function formatCompactCurrency(value: number) {
-  return compactCurrencyFormatter.format(value)
+function formatCompactCurrency(value: number, currency?: string | null) {
+  return formatCurrencyValue(value, currency, {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  })
 }
 
 async function getErrorMessage(response: Response) {
@@ -121,7 +114,11 @@ async function getErrorMessage(response: Response) {
   return `Server error: ${response.status}`
 }
 
-function SimulationTooltip({ active, payload }: SimulationTooltipProps) {
+function SimulationTooltip({
+  active,
+  payload,
+  currency,
+}: SimulationTooltipProps) {
   if (!active || !payload?.length) {
     return null
   }
@@ -136,19 +133,20 @@ function SimulationTooltip({ active, payload }: SimulationTooltipProps) {
       <p className="text-muted-foreground">
         Mean:{" "}
         <span className="font-medium text-foreground">
-          {formatCurrency(row.mean)}
+          {formatCurrency(row.mean, currency)}
         </span>
       </p>
       <p className="text-muted-foreground">
         Median:{" "}
         <span className="font-medium text-foreground">
-          {formatCurrency(row.p50)}
+          {formatCurrency(row.p50, currency)}
         </span>
       </p>
       <p className="text-muted-foreground">
         5%-95% range:{" "}
         <span className="font-medium text-foreground">
-          {formatCurrency(row.p05)} to {formatCurrency(row.p95)}
+          {formatCurrency(row.p05, currency)} to{" "}
+          {formatCurrency(row.p95, currency)}
         </span>
       </p>
     </div>
@@ -167,6 +165,7 @@ export function MonteCarloSimulationChart({
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const skeletonClass = isLoading ? "" : "animate-none bg-muted/70"
+  const currency = data?.portfolio_currency
 
   const holdingsKey = useMemo(() => JSON.stringify(holdings), [holdings])
   const requestHoldings = useMemo(
@@ -412,7 +411,9 @@ export function MonteCarloSimulationChart({
               />
               <YAxis
                 domain={yDomain}
-                tickFormatter={(value) => formatCompactCurrency(Number(value))}
+                tickFormatter={(value) =>
+                  formatCompactCurrency(Number(value), currency)
+                }
                 axisLine={{ stroke: gridColor }}
                 tickLine={{ stroke: gridColor }}
                 tick={{ fontSize: 11, fill: axisColor }}
@@ -430,7 +431,7 @@ export function MonteCarloSimulationChart({
               />
               <Tooltip
                 cursor={{ stroke: "var(--ring)", strokeDasharray: "3 3" }}
-                content={<SimulationTooltip />}
+                content={<SimulationTooltip currency={currency} />}
               />
               {pathKeys.map((key) => (
                 <Line

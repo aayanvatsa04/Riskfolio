@@ -93,6 +93,7 @@ def test_analyze_calls_engine_with_validated_payload(monkeypatch):
     body = response.json()
     assert body["var_positive"] == 523.12
     assert body["portfolio_value"] == 10_000.0
+    assert body["portfolio_currency"] == "USD"
     assert body["portfolio_weights"] == {"AAPL": 0.4, "TSLA": 0.3, "GOOGL": 0.3}
     assert body["holdings"] == [
         {
@@ -100,6 +101,7 @@ def test_analyze_calls_engine_with_validated_payload(monkeypatch):
             "quantity": 40.0,
             "latest_price": 100.0,
             "market_value": 4000.0,
+            "currency": "USD",
             "weight": 0.4,
         },
         {
@@ -107,6 +109,7 @@ def test_analyze_calls_engine_with_validated_payload(monkeypatch):
             "quantity": 60.0,
             "latest_price": 50.0,
             "market_value": 3000.0,
+            "currency": "USD",
             "weight": 0.3,
         },
         {
@@ -114,6 +117,7 @@ def test_analyze_calls_engine_with_validated_payload(monkeypatch):
             "quantity": 15.0,
             "latest_price": 200.0,
             "market_value": 3000.0,
+            "currency": "USD",
             "weight": 0.3,
         },
     ]
@@ -144,33 +148,18 @@ def test_analyze_rejects_invalid_quantity():
     assert response.status_code == 422
 
 
-def test_analyze_rejects_confirmed_non_usd_ticker(monkeypatch):
-    monkeypatch.setattr("app.main._get_quote_currency", lambda _ticker: "EUR")
-
-    response = asyncio.run(
-        _request(
-            "POST",
-            "/api/v1/analyze",
-            json={"holdings": [{"ticker": "BMW.DE", "quantity": 10}]},
-        )
-    )
-
-    assert response.status_code == 422
-    assert "USD-quoted tickers only" in response.json()["detail"]
-
-
-def test_analyze_allows_unknown_currency_metadata(monkeypatch):
+def test_analyze_allows_same_non_usd_currency(monkeypatch):
     fetch_calls = []
     engine_calls = []
 
-    monkeypatch.setattr("app.main._get_quote_currency", lambda _ticker: None)
+    monkeypatch.setattr("app.main._get_quote_currency", lambda _ticker: "EUR")
 
     def fake_fetch_historical_prices(
         tickers: list[str], period: str = "5y"
     ) -> pd.DataFrame:
         fetch_calls.append({"tickers": tickers, "period": period})
         return pd.DataFrame(
-            {"AAPL": [100.0]},
+            {"BMW.DE": [100.0]},
             index=pd.to_datetime(["2026-05-29"]),
         )
 
@@ -187,13 +176,56 @@ def test_analyze_allows_unknown_currency_metadata(monkeypatch):
         _request(
             "POST",
             "/api/v1/analyze",
-            json={"holdings": [{"ticker": "AAPL", "quantity": 10}]},
+            json={"holdings": [{"ticker": "BMW.DE", "quantity": 10}]},
         )
     )
 
     assert response.status_code == 200
-    assert fetch_calls == [{"tickers": ["AAPL"], "period": "5d"}]
-    assert engine_calls[0]["portfolio"] == {"AAPL": 1.0}
+    body = response.json()
+    assert body["portfolio_currency"] == "EUR"
+    assert body["holdings"][0]["currency"] == "EUR"
+    assert fetch_calls == [{"tickers": ["BMW.DE"], "period": "5d"}]
+    assert engine_calls[0]["portfolio"] == {"BMW.DE": 1.0}
+
+
+def test_analyze_rejects_mixed_quote_currencies(monkeypatch):
+    currencies = {"AAPL": "USD", "BMW.DE": "EUR"}
+    monkeypatch.setattr(
+        "app.main._get_quote_currency", lambda ticker: currencies[ticker]
+    )
+
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/api/v1/analyze",
+            json={
+                "holdings": [
+                    {"ticker": "AAPL", "quantity": 10},
+                    {"ticker": "BMW.DE", "quantity": 10},
+                ]
+            },
+        )
+    )
+
+    assert response.status_code == 422
+    assert "same currency" in response.json()["detail"]
+    assert "AAPL (USD)" in response.json()["detail"]
+    assert "BMW.DE (EUR)" in response.json()["detail"]
+
+
+def test_analyze_rejects_unknown_currency_metadata(monkeypatch):
+    monkeypatch.setattr("app.main._get_quote_currency", lambda _ticker: None)
+
+    response = asyncio.run(
+        _request(
+            "POST",
+            "/api/v1/analyze",
+            json={"holdings": [{"ticker": "AAPL", "quantity": 10}]},
+        )
+    )
+
+    assert response.status_code == 422
+    assert "Unable to confirm quote currency" in response.json()["detail"]
 
 
 def test_analyze_rejects_invalid_horizon():
@@ -318,6 +350,7 @@ def test_monte_carlo_paths_calls_engine_with_slider_payload(monkeypatch):
     assert body["n_paths"] == 80
     assert body["volatility_multiplier"] == 1.35
     assert body["portfolio_value"] == 2000.0
+    assert body["portfolio_currency"] == "USD"
     assert body["summary"][1]["p95"] == 2125.0
     assert fetch_calls == [{"tickers": ["AAPL", "MSFT"], "period": "5d"}]
     assert engine_calls == [
@@ -505,8 +538,11 @@ def test_stress_test_calls_engine_with_validated_payload(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
+    assert body["portfolio_currency"] == "USD"
     assert body["baseline"]["portfolio_value"] == 2000.0
+    assert body["baseline"]["portfolio_currency"] == "USD"
     assert body["shocked"]["portfolio_value"] == 8500.0
+    assert body["shocked"]["portfolio_currency"] == "USD"
     assert body["shocks_applied"]["price_shocks"] == {"AAPL": -0.15}
     assert body["shocks_applied"]["volatility_multiplier"] == 1.5
     assert fetch_calls == [{"tickers": ["AAPL", "MSFT"], "period": "5d"}]
@@ -662,6 +698,7 @@ def test_optimize_includes_portfolio_value_and_holdings(monkeypatch):
     # portfolio_value must be present and correct: 10*202 + 5*305 = 3545.0
     assert "portfolio_value" in body
     assert body["portfolio_value"] == 3545.0
+    assert body["portfolio_currency"] == "USD"
 
     # holdings must be present with full per-ticker detail, matching the
     # same shape /analyze already returns.
@@ -670,15 +707,18 @@ def test_optimize_includes_portfolio_value_and_holdings(monkeypatch):
     assert holdings_by_ticker["AAPL"]["quantity"] == 10.0
     assert holdings_by_ticker["AAPL"]["latest_price"] == 202.0
     assert holdings_by_ticker["AAPL"]["market_value"] == 2020.0
+    assert holdings_by_ticker["AAPL"]["currency"] == "USD"
     assert holdings_by_ticker["MSFT"]["quantity"] == 5.0
     assert holdings_by_ticker["MSFT"]["latest_price"] == 305.0
     assert holdings_by_ticker["MSFT"]["market_value"] == 1525.0
+    assert holdings_by_ticker["MSFT"]["currency"] == "USD"
 
     # share_targets must be populated on every portfolio point that has
     # weights, using compute_share_targets() server-side -- so the
     # frontend never has to do this math itself.
     max_sharpe_targets = body["max_sharpe_portfolio"]["share_targets"]
     assert max_sharpe_targets is not None
+    assert max_sharpe_targets["portfolio_currency"] == "USD"
     assert "AAPL" in max_sharpe_targets["shares"]
     assert "MSFT" in max_sharpe_targets["shares"]
     for ticker_result in max_sharpe_targets["shares"].values():

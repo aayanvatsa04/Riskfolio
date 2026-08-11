@@ -19,7 +19,7 @@ export default function Page() {
               </div>
               <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
                 Portfolio risk analysis, stress testing, and efficient frontier
-                optimization for USD-quoted holdings.
+                optimization for same-currency quoted holdings.
               </p>
             </div>
           </div>

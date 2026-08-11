@@ -22,6 +22,7 @@ class ShareTarget(BaseModel):
 
 class ShareTargets(BaseModel):
     portfolio_value: float
+    portfolio_currency: str | None = None
     shares: dict[str, ShareTarget]
 
 
@@ -100,8 +101,8 @@ class OptimizeResponse(BaseModel):
     current_portfolio: PortfolioPoint
     risk_free_rate: float
     n_portfolios: int
-    # Today's total portfolio value in USD, computed from live prices at
-    # request time (same value used to derive current_portfolio's weights).
+    # Today's total portfolio value in the shared quote currency, computed
+    # from live prices at request time (same value used to derive current_portfolio's weights).
     # Combined with each target portfolio's `weights`, this is what lets a
     # consumer compute an ACTIONABLE target: target_value = weight *
     # portfolio_value, then target_shares = target_value / latest_price
@@ -109,6 +110,7 @@ class OptimizeResponse(BaseModel):
     # a caller only has percentages, not something a retail user can act
     # on directly (e.g. "buy 3 more shares of AAPL").
     portfolio_value: float
+    portfolio_currency: str | None = None
     # Per-ticker current quantity, latest live price, market value, and
     # weight — same shape as VaRResponse.holdings (see models/var.py) for
     # consistency across every endpoint. Combined with portfolio_value and

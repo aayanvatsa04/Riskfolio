@@ -16,6 +16,27 @@ async def _request(method: str, url: str, **kwargs) -> httpx.Response:
         return await client.request(method, url, **kwargs)
 
 
+def test_get_quote_currency_reads_fast_info(monkeypatch):
+    class FakeTicker:
+        fast_info = {"currency": "eur"}
+
+    monkeypatch.setattr("app.engine.data.yf.Ticker", lambda _ticker: FakeTicker())
+
+    assert data.get_quote_currency("BMW.DE") == "EUR"
+
+
+def test_get_quote_currency_falls_back_to_info(monkeypatch):
+    class FakeTicker:
+        fast_info = {}
+
+        def get_info(self):
+            return {"currency": "JPY"}
+
+    monkeypatch.setattr("app.engine.data.yf.Ticker", lambda _ticker: FakeTicker())
+
+    assert data.get_quote_currency("7203.T") == "JPY"
+
+
 def test_fetch_historical_prices_rejects_ticker_with_insufficient_history(
     monkeypatch,
 ):
