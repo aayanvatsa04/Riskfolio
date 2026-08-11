@@ -210,6 +210,34 @@ function getRequestKey(request: unknown) {
   return JSON.stringify(request)
 }
 
+function getDuplicateTickers(holdings: PortfolioRequest["holdings"]) {
+  const seen = new Set<string>()
+  const duplicates = new Set<string>()
+
+  holdings.forEach((holding) => {
+    const ticker = holding.ticker.toUpperCase().trim()
+
+    if (!ticker) {
+      return
+    }
+
+    if (seen.has(ticker)) {
+      duplicates.add(ticker)
+    } else {
+      seen.add(ticker)
+    }
+  })
+
+  return Array.from(duplicates)
+}
+
+function getDuplicateTickerMessage(duplicateTickers: string[]) {
+  const tickers = duplicateTickers.join(", ")
+  const noun = duplicateTickers.length === 1 ? "ticker" : "tickers"
+
+  return `Combine duplicate ${noun} before saving or running analysis: ${tickers}.`
+}
+
 function createPortfolioId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID()
@@ -367,6 +395,7 @@ export function PortfolioForm() {
   const lastAutosaveKeyRef = useRef<string | null>(null)
   const hasSeededStarterPortfolioRef = useRef(false)
   const hasShownStarterPortfolioInfoRef = useRef(false)
+  const duplicateTickerToastKeyRef = useRef<string | null>(null)
   const [varResultRequestKey, setVarResultRequestKey] = useState<string | null>(
     null,
   )
@@ -389,6 +418,12 @@ export function PortfolioForm() {
 
     hasShownStarterPortfolioInfoRef.current = true
     toast.info("No saved portfolios found, loading sample portfolio.")
+  }, [])
+
+  const showDuplicateTickerError = useCallback((duplicateTickers: string[]) => {
+    toast.error("Duplicate ticker symbols", {
+      description: getDuplicateTickerMessage(duplicateTickers),
+    })
   }, [])
 
   const refreshSavedPortfolios = useCallback(async () => {
@@ -750,6 +785,12 @@ export function PortfolioForm() {
       return
     }
 
+    const duplicateTickers = getDuplicateTickers(holdings)
+    if (duplicateTickers.length > 0) {
+      showDuplicateTickerError(duplicateTickers)
+      return
+    }
+
     setIsSaving(true)
 
     try {
@@ -1056,6 +1097,10 @@ export function PortfolioForm() {
       return null
     }
 
+    if (getDuplicateTickers(holdings).length > 0) {
+      return null
+    }
+
     const name = portfolioName.trim() || getDefaultPortfolioName(holdings)
     const key = getPortfolioSnapshotKey({
       holdings,
@@ -1349,13 +1394,21 @@ export function PortfolioForm() {
         return
       }
 
+      const duplicateTickers = getDuplicateTickers(holdings)
+      if (duplicateTickers.length > 0) {
+        const message = getDuplicateTickerMessage(duplicateTickers)
+        setError(message)
+        showDuplicateTickerError(duplicateTickers)
+        return
+      }
+
       await Promise.all([
         runVarAnalysis(holdings),
         runStressTest(holdings),
         runOptimization(holdings),
       ])
     },
-    [runOptimization, runStressTest, runVarAnalysis],
+    [runOptimization, runStressTest, runVarAnalysis, showDuplicateTickerError],
   )
 
   const getValidatedHoldings = () => {
@@ -1366,6 +1419,14 @@ export function PortfolioForm() {
       setError(
         "Please add at least one valid portfolio entry with a ticker and quantity.",
       )
+      return null
+    }
+
+    const duplicateTickers = getDuplicateTickers(holdings)
+    if (duplicateTickers.length > 0) {
+      const message = getDuplicateTickerMessage(duplicateTickers)
+      setError(message)
+      showDuplicateTickerError(duplicateTickers)
       return null
     }
 
@@ -1404,7 +1465,13 @@ export function PortfolioForm() {
 
   const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault()
-    await runAllAnalyses(buildHoldingsRequest())
+    const holdings = getValidatedHoldings()
+
+    if (!holdings) {
+      return
+    }
+
+    await runAllAnalyses(holdings)
   }
 
   const formatCurrency = (value: number) => {
@@ -1579,6 +1646,25 @@ export function PortfolioForm() {
     () => JSON.parse(stressHoldingsKey) as PortfolioRequest["holdings"],
     [stressHoldingsKey],
   )
+
+  const duplicateTickerKey = useMemo(
+    () => getDuplicateTickers(stressHoldings).join(","),
+    [stressHoldings],
+  )
+
+  useEffect(() => {
+    if (!duplicateTickerKey) {
+      duplicateTickerToastKeyRef.current = null
+      return
+    }
+
+    if (duplicateTickerToastKeyRef.current === duplicateTickerKey) {
+      return
+    }
+
+    duplicateTickerToastKeyRef.current = duplicateTickerKey
+    showDuplicateTickerError(duplicateTickerKey.split(","))
+  }, [duplicateTickerKey, showDuplicateTickerError])
 
   const currentVarRequestKey = useMemo(() => {
     if (stressHoldings.length === 0) {
@@ -2468,9 +2554,9 @@ export function PortfolioForm() {
                     <div className="text-sm">
                       <p className="mb-2 font-medium">Calculated Holdings:</p>
                       <div className="space-y-2">
-                        {result.holdings.map((holding) => (
+                        {result.holdings.map((holding, index) => (
                           <div
-                            key={holding.ticker}
+                            key={`${holding.ticker}-${index}`}
                             className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2"
                           >
                             <span className="font-medium">
@@ -2577,13 +2663,14 @@ export function PortfolioForm() {
 
               <div className="space-y-4">
                 {stressHoldings.length > 0 ? (
-                  stressHoldings.map((holding) => {
+                  stressHoldings.map((holding, index) => {
                     const shockValue = stressPriceShocks[holding.ticker] ?? 0
+                    const shockId = `shock-${holding.ticker}-${index}`
 
                     return (
-                      <div key={holding.ticker} className="space-y-3">
+                      <div key={shockId} className="space-y-3">
                         <div className="flex items-center justify-between gap-3">
-                          <Label htmlFor={`shock-${holding.ticker}`}>
+                          <Label htmlFor={shockId}>
                             {holding.ticker} price volatility
                           </Label>
                           <span className="font-mono text-sm tabular-nums">
@@ -2592,7 +2679,7 @@ export function PortfolioForm() {
                           </span>
                         </div>
                         <Slider
-                          id={`shock-${holding.ticker}`}
+                          id={shockId}
                           min={-80}
                           max={80}
                           step={1}
