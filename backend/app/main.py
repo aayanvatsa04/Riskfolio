@@ -8,8 +8,8 @@ import yfinance as yf
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.engine.data import fetch_historical_prices
 from app.engine.monte_carlo_var import (
-    fetch_historical_prices,
     run_price_path_analysis,
     run_var_analysis,
 )

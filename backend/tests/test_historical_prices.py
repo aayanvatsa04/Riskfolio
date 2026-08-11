@@ -6,7 +6,7 @@ import httpx
 import pandas as pd
 import pytest
 
-from app.engine import monte_carlo_var
+from app.engine import data
 from app.main import app
 
 
@@ -43,10 +43,10 @@ def test_fetch_historical_prices_rejects_ticker_with_insufficient_history(
     def fake_download(tickers, period="5y", auto_adjust=True, progress=False):
         return pd.concat({"Close": downloaded_prices}, axis=1)
 
-    monkeypatch.setattr("app.engine.monte_carlo_var.yf.download", fake_download)
+    monkeypatch.setattr("app.engine.data.yf.download", fake_download)
 
     with pytest.raises(ValueError, match="SPCX"):
-        monte_carlo_var.fetch_historical_prices(["AAPL", "GOOGL", "SPCX"], period="5y")
+        data.fetch_historical_prices(["AAPL", "GOOGL", "SPCX"], period="5y")
 
 
 def test_fetch_historical_prices_allows_sufficient_history_for_all_tickers(
@@ -66,9 +66,9 @@ def test_fetch_historical_prices_allows_sufficient_history_for_all_tickers(
     def fake_download(tickers, period="5y", auto_adjust=True, progress=False):
         return pd.concat({"Close": downloaded_prices}, axis=1)
 
-    monkeypatch.setattr("app.engine.monte_carlo_var.yf.download", fake_download)
+    monkeypatch.setattr("app.engine.data.yf.download", fake_download)
 
-    prices = monte_carlo_var.fetch_historical_prices(["AAPL", "GOOGL"], period="5y")
+    prices = data.fetch_historical_prices(["AAPL", "GOOGL"], period="5y")
     assert len(prices) == 1_260
 
 
@@ -99,10 +99,10 @@ def test_fetch_historical_prices_rejects_insufficient_overlap_without_naming_wro
     def fake_download(tickers, period="5y", auto_adjust=True, progress=False):
         return pd.concat({"Close": downloaded_prices}, axis=1)
 
-    monkeypatch.setattr("app.engine.monte_carlo_var.yf.download", fake_download)
+    monkeypatch.setattr("app.engine.data.yf.download", fake_download)
 
     with pytest.raises(ValueError, match="overlapping historical data"):
-        monte_carlo_var.fetch_historical_prices(["OLDCO", "NEWCO"], period="5y")
+        data.fetch_historical_prices(["OLDCO", "NEWCO"], period="5y")
 
 
 def test_fetch_historical_prices_guard_does_not_apply_to_other_periods(monkeypatch):
@@ -118,9 +118,9 @@ def test_fetch_historical_prices_guard_does_not_apply_to_other_periods(monkeypat
     def fake_download(tickers, period="5d", auto_adjust=True, progress=False):
         return pd.concat({"Close": downloaded_prices}, axis=1)
 
-    monkeypatch.setattr("app.engine.monte_carlo_var.yf.download", fake_download)
+    monkeypatch.setattr("app.engine.data.yf.download", fake_download)
 
-    prices = monte_carlo_var.fetch_historical_prices(["AAPL"], period="5d")
+    prices = data.fetch_historical_prices(["AAPL"], period="5d")
     assert len(prices) == 3
     calls = []
     monkeypatch.setattr("app.main._get_quote_currency", lambda _ticker: "USD")
@@ -221,9 +221,9 @@ def test_fetch_historical_prices_downloads_multiple_tickers(monkeypatch):
         assert progress is False
         return pd.concat({"Close": downloaded_prices}, axis=1)
 
-    monkeypatch.setattr("app.engine.monte_carlo_var.yf.download", fake_download)
+    monkeypatch.setattr("app.engine.data.yf.download", fake_download)
 
-    prices = monte_carlo_var.fetch_historical_prices(["AAPL", "TSLA"], period="1y")
+    prices = data.fetch_historical_prices(["AAPL", "TSLA"], period="1y")
 
     pd.testing.assert_frame_equal(prices, downloaded_prices)
 
@@ -239,9 +239,9 @@ def test_fetch_historical_prices_downloads_single_ticker(monkeypatch):
             index=pd.to_datetime(["2026-05-28", "2026-05-29"]),
         )
 
-    monkeypatch.setattr("app.engine.monte_carlo_var.yf.download", fake_download)
+    monkeypatch.setattr("app.engine.data.yf.download", fake_download)
 
-    prices = monte_carlo_var.fetch_historical_prices(["AAPL"], period="5d")
+    prices = data.fetch_historical_prices(["AAPL"], period="5d")
 
     expected = pd.DataFrame(
         {"AAPL": [190.5, 191.25]},

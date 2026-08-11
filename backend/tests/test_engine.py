@@ -1,8 +1,8 @@
 """
 Riskfolio — Pytest Test Suite for Monte Carlo VaR Engine
 ---------------------------------------------------------
-Tests the mathematical correctness and robustness of each
-function in monte_carlo_var.py.
+Tests the mathematical correctness and robustness of the shared return
+statistics helpers and the Monte Carlo VaR functions.
 
 Run with:
     pytest test_engine.py -v
@@ -15,11 +15,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from app.engine.data import compute_log_returns, compute_statistics
 from app.engine.monte_carlo_var import (
     calculate_var,
     cholesky_decomposition,
-    compute_log_returns,
-    compute_statistics,
     run_monte_carlo,
     run_monte_carlo_price_paths,
 )
