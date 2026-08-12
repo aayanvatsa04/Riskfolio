@@ -119,6 +119,11 @@ interface PortfolioRequest {
   n_simulations: number
 }
 
+interface StressTestRequestPayload extends PortfolioRequest {
+  price_shocks: Record<string, number>
+  volatility_multiplier: number
+}
+
 interface HoldingValuation {
   ticker: string
   quantity: number
@@ -208,6 +213,48 @@ function getPortfolioSnapshotKey({
 
 function getRequestKey(request: unknown) {
   return JSON.stringify(request)
+}
+
+function getStressRequestContextKey(
+  request: Pick<
+    StressTestRequestPayload,
+    "holdings" | "horizon" | "confidence_level" | "n_simulations"
+  >,
+) {
+  return getRequestKey({
+    holdings: request.holdings,
+    horizon: request.horizon,
+    confidence_level: request.confidence_level,
+    n_simulations: request.n_simulations,
+  })
+}
+
+function getStressRequestContextKeyFromRequestKey(requestKey: string | null) {
+  if (!requestKey) {
+    return null
+  }
+
+  try {
+    const request = JSON.parse(requestKey) as Partial<StressTestRequestPayload>
+
+    if (
+      !Array.isArray(request.holdings) ||
+      typeof request.horizon !== "number" ||
+      typeof request.confidence_level !== "number" ||
+      typeof request.n_simulations !== "number"
+    ) {
+      return null
+    }
+
+    return getStressRequestContextKey({
+      holdings: request.holdings,
+      horizon: request.horizon,
+      confidence_level: request.confidence_level,
+      n_simulations: request.n_simulations,
+    })
+  } catch {
+    return null
+  }
 }
 
 function getDuplicateTickers(holdings: PortfolioRequest["holdings"]) {
@@ -1303,10 +1350,19 @@ export function PortfolioForm() {
   ])
 
   const buildStressTestRequest = useCallback(
-    (holdings: PortfolioRequest["holdings"]) => {
+    (
+      holdings: PortfolioRequest["holdings"],
+      scenario?: {
+        priceShocks?: Record<string, number>
+        volatilityPercent?: number
+      },
+    ): StressTestRequestPayload => {
+      const activePriceShocks = scenario?.priceShocks ?? stressPriceShocks
+      const activeVolatilityPercent =
+        scenario?.volatilityPercent ?? stressVolatilityPercent
       const priceShocks = holdings.reduce<Record<string, number>>(
         (acc, holding) => {
-          const shockPercent = stressPriceShocks[holding.ticker] ?? 0
+          const shockPercent = activePriceShocks[holding.ticker] ?? 0
           if (shockPercent !== 0) {
             acc[holding.ticker] = shockPercent / 100
           }
@@ -1318,7 +1374,7 @@ export function PortfolioForm() {
       return {
         holdings,
         price_shocks: priceShocks,
-        volatility_multiplier: stressVolatilityPercent / 100,
+        volatility_multiplier: activeVolatilityPercent / 100,
         horizon,
         confidence_level: confidenceLevel / 100,
         n_simulations: nSimulations,
@@ -1809,12 +1865,75 @@ export function PortfolioForm() {
     return getRequestKey(buildStressTestRequest(stressHoldings))
   }, [buildStressTestRequest, stressHoldings])
 
+  const currentStressContextKey = useMemo(() => {
+    if (stressHoldings.length === 0) {
+      return null
+    }
+
+    return getStressRequestContextKey({
+      holdings: stressHoldings,
+      horizon,
+      confidence_level: confidenceLevel / 100,
+      n_simulations: nSimulations,
+    })
+  }, [confidenceLevel, horizon, nSimulations, stressHoldings])
+
+  const stressResultContextKey = useMemo(
+    () => getStressRequestContextKeyFromRequestKey(stressResultRequestKey),
+    [stressResultRequestKey],
+  )
+
+  const neutralStressRequestKey = useMemo(() => {
+    if (stressHoldings.length === 0) {
+      return null
+    }
+
+    return getRequestKey(
+      buildStressTestRequest(stressHoldings, {
+        priceShocks: {},
+        volatilityPercent: 100,
+      }),
+    )
+  }, [buildStressTestRequest, stressHoldings])
+
   const updateStressPriceShock = (ticker: string, value: number) => {
     setStressPriceShocks((current) => ({
       ...current,
       [ticker]: value,
     }))
   }
+
+  const handleResetStressScenario = useCallback(() => {
+    setStressPriceShocks({})
+    setStressVolatilityPercent(100)
+    setStressError(null)
+
+    setStressResult((current) => {
+      if (!current) {
+        return current
+      }
+
+      return {
+        ...current,
+        shocked: {
+          ...current.baseline,
+          portfolio_weights: { ...current.baseline.portfolio_weights },
+        },
+        shocks_applied: {
+          price_shocks: {},
+          volatility_multiplier: 1,
+        },
+      }
+    })
+
+    if (
+      neutralStressRequestKey &&
+      currentStressContextKey &&
+      stressResultContextKey === currentStressContextKey
+    ) {
+      setStressResultRequestKey(neutralStressRequestKey)
+    }
+  }, [currentStressContextKey, neutralStressRequestKey, stressResultContextKey])
 
   useEffect(() => {
     if (!currentVarRequestKey) {
@@ -2790,10 +2909,7 @@ export function PortfolioForm() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    setStressPriceShocks({})
-                    setStressVolatilityPercent(100)
-                  }}
+                  onClick={handleResetStressScenario}
                 >
                   Reset
                 </Button>

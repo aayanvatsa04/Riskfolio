@@ -56,6 +56,15 @@ function pct(value: number) {
   return `${(value * 100).toFixed(2)}%`
 }
 
+function isNeutralStressScenario(result: StressTestResult) {
+  return (
+    result.shocks_applied.volatility_multiplier === 1 &&
+    Object.values(result.shocks_applied.price_shocks).every(
+      (shock) => shock === 0,
+    )
+  )
+}
+
 function ScenarioCard({
   title,
   badge,
@@ -175,6 +184,9 @@ export function StressTestResults({
     )
   }
 
+  const isNeutralScenario = isNeutralStressScenario(result)
+  const shockedScenario = isNeutralScenario ? result.baseline : result.shocked
+
   return (
     <Card className="border-primary/30">
       <CardHeader>
@@ -203,9 +215,9 @@ export function StressTestResults({
             currency={result.portfolio_currency}
           />
           <ScenarioCard
-            title="Shocked"
-            badge="Scenario"
-            scenario={result.shocked}
+            title={isNeutralScenario ? "Baseline" : "Shocked"}
+            badge={isNeutralScenario ? "Current" : "Scenario"}
+            scenario={shockedScenario}
             currency={result.portfolio_currency}
           />
         </div>
