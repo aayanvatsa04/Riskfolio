@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 
 from app.engine.mpt_optimizer import (
@@ -535,8 +536,10 @@ class TestRunMptOptimization:
     """
     Integration tests for run_mpt_optimization() — the full pipeline.
 
-    These tests use real yfinance data (like test_engine.py does for VaR),
-    so they require a network connection and may take a few seconds.
+    These tests patch only the market-data provider boundary with
+    deterministic synthetic prices, so the optimizer pipeline remains
+    exercised without depending on Yahoo Finance availability or yfinance's
+    local cache state.
 
     Mathematical invariants verified:
         - Response has all required keys
@@ -548,11 +551,30 @@ class TestRunMptOptimization:
     """
 
     @pytest.fixture
-    def optimization_result(self):
+    def optimization_result(self, monkeypatch):
         """
-        Run a real optimization once and reuse across all tests in this class.
+        Run a full optimization once and reuse across all tests in this class.
         Using a small n_portfolios=500 so tests run quickly.
         """
+        dates = pd.bdate_range(end="2026-07-17", periods=TRADING_DAYS * 3)
+        day = np.arange(len(dates))
+        prices = pd.DataFrame(
+            {
+                "AAPL": 150.0 * np.exp(0.00035 * day + 0.020 * np.sin(day / 17.0)),
+                "MSFT": 220.0 * np.exp(0.00055 * day + 0.015 * np.cos(day / 23.0)),
+            },
+            index=dates,
+        )
+
+        def fake_fetch_historical_prices(tickers):
+            assert tickers == ["AAPL", "MSFT"]
+            return prices
+
+        monkeypatch.setattr(
+            "app.engine.mpt_optimizer.fetch_historical_prices",
+            fake_fetch_historical_prices,
+        )
+
         return run_mpt_optimization(
             tickers=["AAPL", "MSFT"],
             current_weights={"AAPL": 0.5, "MSFT": 0.5},
