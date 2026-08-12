@@ -6,11 +6,6 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-} from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import {
@@ -82,6 +77,8 @@ import {
   StressTestResults,
   type StressTestResult,
 } from "@/components/stress-test-results"
+import { TickerSearchInput } from "@/components/ticker-search-input"
+import type { TickerSearchResult } from "@/lib/ticker-search"
 import {
   Trash2,
   Plus,
@@ -629,12 +626,48 @@ export function PortfolioForm() {
         entry.id === id
           ? {
               ...entry,
-              ticker,
+              ticker: ticker.toUpperCase().trim(),
               companyName: null,
               quoteCurrency: null,
               exchange: null,
               currentPrice: null,
               priceStatus: ticker.trim() ? "loading" : "idle",
+              priceError: undefined,
+              priceFetchedAt: undefined,
+              priceSource: undefined,
+              previousClose: null,
+            }
+          : entry,
+      ),
+    )
+  }
+
+  const applyTickerSearchResult = (id: string, result: TickerSearchResult) => {
+    const ticker = result.symbol.toUpperCase().trim()
+
+    setResult(null)
+    setVarResultRequestKey(null)
+    setOptimizerResult(null)
+    setOptimizerResultRequestKey(null)
+    setStressResult(null)
+    setStressResultRequestKey(null)
+    setVarError(null)
+    setOptimizerError(null)
+    setStressError(null)
+    setStressPriceShocks({})
+    setStressVolatilityPercent(100)
+    setError(null)
+    setEntries(
+      entries.map((entry) =>
+        entry.id === id
+          ? {
+              ...entry,
+              ticker,
+              companyName: result.name ?? null,
+              quoteCurrency: result.currency ?? null,
+              exchange: result.exchange ?? null,
+              currentPrice: null,
+              priceStatus: ticker ? "loading" : "idle",
               priceError: undefined,
               priceFetchedAt: undefined,
               priceSource: undefined,
@@ -2184,40 +2217,16 @@ export function PortfolioForm() {
                   return (
                     <div key={entry.id} className="flex w-full">
                       <div className="min-w-0 flex-1 px-1">
-                        <InputGroup className="w-full min-w-0 overflow-hidden">
-                          {entry.companyName && (
-                            <InputGroupAddon
-                              align="inline-start"
-                              className="w-2/3 min-w-0 flex-none justify-start border-r px-2 text-left text-xs font-normal"
-                              title={[
-                                entry.companyName,
-                                entry.exchange,
-                                entry.quoteCurrency,
-                              ]
-                                .filter(Boolean)
-                                .join(" - ")}
-                            >
-                              <span className="block w-full truncate text-left">
-                                {entry.companyName}
-                              </span>
-                            </InputGroupAddon>
-                          )}
-                          <InputGroupInput
-                            placeholder="AAPL"
-                            value={entry.ticker}
-                            onChange={(e) =>
-                              updateTicker(
-                                entry.id,
-                                e.target.value.toUpperCase(),
-                              )
-                            }
-                            className={`min-w-0 font-mono text-right uppercase md:px-2 ${
-                              entry.companyName
-                                ? "ml-auto w-1/3 flex-none px-1.5"
-                                : "flex-1"
-                            }`}
-                          />
-                        </InputGroup>
+                        <TickerSearchInput
+                          value={entry.ticker}
+                          companyName={entry.companyName}
+                          exchange={entry.exchange}
+                          quoteCurrency={entry.quoteCurrency}
+                          onChange={(ticker) => updateTicker(entry.id, ticker)}
+                          onSelect={(result) =>
+                            applyTickerSearchResult(entry.id, result)
+                          }
+                        />
                       </div>
                       <div className="w-1/12 px-1">
                         <Input

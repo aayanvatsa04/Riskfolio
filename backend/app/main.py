@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.engine.data import (
     fetch_historical_prices,
+    search_ticker_symbols,
 )
 from app.engine.data import (
     get_quote_currency as _get_quote_currency,
@@ -390,6 +391,41 @@ async def historical_prices(
         response["metadata"] = _build_ticker_metadata(normalized_tickers)
 
     return response
+
+
+@api_v1.get("/ticker-search")
+async def ticker_search(
+    q: Annotated[
+        str,
+        Query(
+            min_length=1,
+            max_length=80,
+            description="Company, index, or Yahoo Finance ticker search text.",
+        ),
+    ],
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=25,
+            description="Maximum Yahoo Finance symbol matches to return.",
+        ),
+    ] = 8,
+) -> dict:
+    query = " ".join(q.strip().split())
+
+    try:
+        results = search_ticker_symbols(query, limit=limit)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to search Yahoo Finance symbols: {exc}",
+        ) from exc
+
+    return {
+        "query": query,
+        "results": results,
+    }
 
 
 @api_v1.post("/optimize", response_model=OptimizeResponse)
